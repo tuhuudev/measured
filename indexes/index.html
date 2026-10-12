@@ -196,7 +196,7 @@ fetch('../labs/indexes/results.json').then((r) => r.json()).then((R) => {
   const ins = R.insert_200k_ms;
   Charts.bars(document.getElementById('chart-inserts'), [
     { label: 'no secondary index', v: ins['0'] }, { label: '1 index', v: ins['1'] }, { label: '3 indexes', v: ins['3'] },
-  ]);
+  ], { note: 'for 200,000 inserts' });
   const tb = document.querySelector('#data-table tbody');
   const add = (q, plan, ms) => { const tr = tb.insertRow(); [q, plan, ms].forEach((t, i) => { const td = tr.insertCell(); td.textContent = t; if (i === 1) td.className = 'mono'; if (i === 2) td.className = 'num'; }); };
   const ms = (v) => (v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : String(v)) + ' ms';

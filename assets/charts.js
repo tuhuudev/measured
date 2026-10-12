@@ -66,23 +66,28 @@ window.Charts = (function () {
     });
   }
 
-  function bars(box, data) {
+  // opts.note: text after the value in the tooltip; opts.fmt: value formatter; d.color: bar colour (default blue).
+  function bars(box, data, opts = {}) {
     const svg = box.querySelector('svg');
-    const W = Math.max(320, box.clientWidth - 24), barH = 26, gap = 18, left = W < 480 ? 120 : 150, right = 70, top = 6;
+    svg.textContent = '';
+    const show = opts.fmt || ((v) => v.toLocaleString('en-US') + ' ms');
+    const W = Math.max(270, box.clientWidth - 24), barH = 26, gap = 18, left = W < 400 ? 96 : W < 480 ? 120 : 150, right = W < 400 ? 72 : 90, top = 6;
     const H = top + data.length * (barH + gap);
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     const max = Math.max(...data.map((d) => d.v));
     data.forEach((d, i) => {
       const y = top + i * (barH + gap);
-      const w = d.v / max * (W - left - right);
+      const w = Math.max(2, d.v / max * (W - left - right));
       const lab = el('text', { x: left - 10, y: y + barH / 2 + 4, 'text-anchor': 'end', class: 'lbl' }, svg);
       lab.textContent = d.label;
-      // flat at the baseline, 4px rounded at the data end
-      el('path', { d: `M${left} ${y}H${left + w - 4}a4 4 0 0 1 4 4v${barH - 8}a4 4 0 0 1 -4 4H${left}Z`, fill: 'var(--search)' }, svg);
+      // flat at the baseline, 4px rounded at the data end (a plain sliver when the bar is too short to round)
+      const fill = d.color || 'var(--search)';
+      if (w > 8) el('path', { d: `M${left} ${y}H${left + w - 4}a4 4 0 0 1 4 4v${barH - 8}a4 4 0 0 1 -4 4H${left}Z`, fill }, svg);
+      else el('rect', { x: left, y, width: w, height: barH, fill }, svg);
       const v = el('text', { x: left + w + 8, y: y + barH / 2 + 4 }, svg);
-      v.textContent = d.v.toLocaleString('en-US') + ' ms';
+      v.textContent = show(d.v);
       const hit = el('rect', { x: 0, y: y - gap / 2, width: W, height: barH + gap, fill: 'transparent' }, svg);
-      hover(hit, box, `<b>${esc(d.label)}</b><br>${d.v.toLocaleString('en-US')} ms for 200,000 inserts`);
+      hover(hit, box, `<b>${esc(d.label)}</b><br>${esc(show(d.v))}${opts.note ? ' ' + esc(opts.note) : ''}`);
     });
   }
 

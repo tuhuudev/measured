@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The N+1 query problem, measured</title>
+<meta name="description" content="1,001 queries versus 1 or 2: the N+1 query problem measured in-process and over a real TCP round trip on localhost, with a calculator for your own latency.">
+<link rel="canonical" href="https://tuhuudev.github.io/measured/n-plus-one/">
+<meta property="og:title" content="The N+1 query problem, measured">
+<meta property="og:description" content="Loading 1,000 authors and their posts: 266 ms with N+1, 29.5 ms with one JOIN, on localhost. Measured, with a round-trip calculator.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="../">Measured<span>.</span></a>
+  <nav class="site"><a href="../">All articles</a><a href="https://github.com/tuhuudev/measured">Source</a></nav>
+</div></header>
+
+<main class="wrap">
+<article>
+<h1>The N+1 query problem, measured</h1>
+<p class="dek">Load a list, then run one more query for each item in it. It reads fine in code and works fine on your laptop. Here's what it costs, measured, and why the cost grows with the distance to your database.</p>
+<p class="meta">Published 2026-10-12 · SQLite 3.49.1 · 10,000 authors, 100,000 posts · one laptop · <a href="https://github.com/tuhuudev/measured/tree/main/labs/n-plus-one">lab code</a></p>
+
+<div class="hero">
+  <div class="stat scan"><div class="k">1,000 authors + posts, N+1</div><div class="v">266 ms</div><div class="p">1,001 queries · over TCP on localhost</div></div>
+  <div class="stat search"><div class="k">Same data, one JOIN</div><div class="v">29.5 ms</div><div class="p">1 query · over TCP on localhost</div></div>
+</div>
+<p class="note">Medians of repeated runs. "Over TCP" means a tiny server on the same machine runs the SQL, so every query pays one real network round trip, the shortest one there is.</p>
+
+<h2 id="what">What N+1 looks like</h2>
+<p>You show a page of authors with their posts. The natural code is:</p>
+<pre><code>authors = db.query("SELECT id, name FROM authors ORDER BY id LIMIT ?", [n])
+for author in authors:                       # 1 query above ...
+    author.posts = db.query(
+        "SELECT id, title FROM posts WHERE author_id = ?", [author.id])   # ... + N queries here</code></pre>
+<p>That's one query for the list and one more per item: N+1. It's common enough to have a name, the "N+1 Query Problem", and it's considered an anti-pattern for client/server databases.<sup><a href="#s-sq-np1">[1]</a></sup> ORMs make it easy to write without noticing. In the Rails guide's example, loading 10 books and then each book's author runs 1 + 10 = 11 queries.<sup><a href="#s-rails">[2]</a></sup></p>
+<p>There are two standard fixes, both returning the same rows:</p>
+<div class="table-scroll"><table>
+  <thead><tr><th>Strategy</th><th>SQL</th><th class="num">Queries for N authors</th></tr></thead>
+  <tbody>
+    <tr><td><strong>N+1</strong></td><td>authors, then <code>posts WHERE author_id = ?</code> once per author</td><td class="num">1 + N</td></tr>
+    <tr><td><strong>JOIN</strong></td><td>authors <code>JOIN</code> posts in one statement</td><td class="num">1</td></tr>
+    <tr><td><strong>IN</strong></td><td>authors, then <code>posts WHERE author_id IN (…all the ids…)</code></td><td class="num">2</td></tr>
+  </tbody>
+</table></div>
+<p>The lab checks that all three load exactly the same posts before timing anything.</p>
+
+<h2 id="measured">Measured: same data, three strategies, two distances</h2>
+<p>The lab loads the first 1,000 authors and their 10,000 posts. It measures each strategy twice:</p>
+<ul>
+  <li><strong>In-process:</strong> Python calls SQLite directly, so there's no network at all.</li>
+  <li><strong>Over TCP on localhost:</strong> the SQL goes to a small server on the same machine, so each query is one real round trip.</li>
+</ul>
+
+<figure>
+<div class="chart" id="chart-tcp">
+  <svg role="img" aria-label="Over TCP on localhost, 1,000 authors: N+1 266 ms, JOIN 29.5 ms, IN 24.5 ms"></svg>
+  <div class="tip"></div>
+</div>
+<figcaption>Over TCP on localhost, N = 1,000. Median of 21 runs.</figcaption>
+</figure>
+
+<figure>
+<div class="chart" id="chart-inproc">
+  <svg role="img" aria-label="In-process, 1,000 authors: N+1 60.4 ms, JOIN 14.4 ms, IN 12.2 ms"></svg>
+  <div class="tip"></div>
+</div>
+<figcaption>In-process, same data, N = 1,000. Median of 21 runs. The scale differs from the chart above; the values are labelled.</figcaption>
+</figure>
+
+<p>Over localhost TCP, N+1 was 9 to 11 times slower than either fix. In-process it was still 4 to 5 times slower. Running a statement isn't free even without a network: 1,001 queries in 60.4 ms is about 60 µs each, including Python's own overhead.</p>
+<p>The gap in milliseconds grows with the number of items, because N+1's query count does:</p>
+<div class="table-scroll"><table id="t-all">
+  <thead><tr><th>N</th><th>Strategy</th><th class="num">Queries</th><th class="num">In-process</th><th class="num">Over TCP</th></tr></thead>
+  <tbody></tbody>
+</table></div>
+
+<h2 id="why">Why distance is what matters</h2>
+<p>With a client/server database such as PostgreSQL or MySQL, every SQL statement is a message to the server and a reply back: one round trip. Hundreds of sequential round trips can be a serious drag.<sup><a href="#s-sq-np1">[1]</a></sup> N+1 makes the number of round trips grow with your data. JOIN and IN keep it at one or two.</p>
+<p>SQLite is the interesting exception, because it isn't client/server. A query is a function call, not a round trip. SQLite's own docs argue that N+1 is not a problem there.<sup><a href="#s-sq-np1">[1]</a></sup> The in-process numbers fit that at small sizes: at 10 authors, N+1 took 0.67 ms. That's slower than a JOIN, but nobody will ever notice. It isn't free, though. At 1,000 authors it still added about 46 ms over the JOIN, with no network involved.</p>
+<p>Our localhost server is the best case for a network: same machine, a median 0.114 ms per bare round trip. Most production setups put the database on another machine, so each round trip costs more. Move the slider to see what that does.</p>
+
+<div class="pg" id="calc">
+  <h3>Round-trip calculator</h3>
+  <div class="row">
+    <label for="calc-n"><strong>Authors (N):</strong></label>
+    <select id="calc-n" style="width:auto"><option value="10">10</option><option value="100">100</option><option value="1000" selected>1,000</option></select>
+  </div>
+  <div class="row" style="flex-wrap:nowrap">
+    <label for="calc-rtt" style="white-space:nowrap"><strong>Round trip:</strong></label>
+    <input id="calc-rtt" type="range" min="0" max="1000" value="500" style="flex:1;min-width:0">
+    <span id="calc-rtt-v" class="mono" style="min-width:5.5em;text-align:right"></span>
+  </div>
+  <div class="chart" id="chart-calc" style="margin-top:8px">
+    <svg role="img" aria-label="Estimated lower bound of total time for each strategy at the chosen round-trip time"></svg>
+    <div class="tip"></div>
+  </div>
+  <p class="note">Estimate: the in-process time measured above, plus one round trip per query. This is a <strong>lower bound</strong> for this lab's queries, because it leaves out sending and decoding the rows. Your database's own per-query time can be higher or lower. On localhost, going over TCP added about 0.205 ms per query to the N+1 run, roughly twice the bare round trip. Don't guess your own round-trip time: <code>ping</code> your database host for a first estimate (a real query round trip costs a bit more).</p>
+</div>
+
+<h2 id="index">N+1 without an index is far worse</h2>
+<p>Each of the N extra queries looks up posts by <code>author_id</code>. With an index on that column, SQLite's plan for each one is <span class="tag search">SEARCH</span><span class="mono">posts USING INDEX idx_posts_author (author_id=?)</span>. Without it, every query is <span class="tag scan">SCAN</span><span class="mono">posts</span>, a pass over all 100,000 rows. The same N+1 loop for 100 authors went from 5.81 ms to 602 ms, about 100 times slower, with no network involved.</p>
+<p>Check that the index actually exists, for example with <code>EXPLAIN</code> on the per-item query. A foreign key alone doesn't guarantee it. In PostgreSQL, declaring a foreign key does not create an index on the referencing column.<sup><a href="#s-pg-fk">[3]</a></sup> SQLite doesn't require one either, but its docs say it's almost always beneficial.<sup><a href="#s-sq-fk">[4]</a></sup> (Our lab table declares no foreign key at all. The index is what matters for the lookup.)</p>
+
+<h2 id="fix">The fix in your ORM</h2>
+<p>You rarely write the JOIN or IN by hand. ORMs have a switch for it:</p>
+<ul>
+  <li><strong>Django:</strong> for authors → posts (one author, many posts), use <code>prefetch_related</code>. It does a separate lookup per relationship and joins the results in Python, which is the IN strategy. <code>select_related</code> uses an SQL join (the JOIN strategy), but only for single-valued relations: a foreign key or one-to-one, such as going from a post to its author. It can't follow a "many" relation like author → posts.<sup><a href="#s-django">[5]</a></sup></li>
+  <li><strong>Rails:</strong> <code>preload</code> runs one query per association (IN). <code>eager_load</code> uses a <code>LEFT OUTER JOIN</code> (JOIN). <code>includes</code> picks between them.<sup><a href="#s-rails">[2]</a></sup> In the guide's books example, <code>includes</code> turns 11 queries into 2.<sup><a href="#s-rails">[2]</a></sup></li>
+</ul>
+<p>JOIN or IN? In this lab they were close, and either one removes the N+1. They differ in shape. A JOIN repeats the author's columns on every post row. The IN version sends each author once but needs a second query, and its list of ids can't grow forever: SQLite allows 32,766 <code>?</code> parameters per statement by default since version 3.32.0, and 999 before that.<sup><a href="#s-sq-limits">[6]</a></sup></p>
+
+<h2 id="spot">How to spot it</h2>
+<ol class="rules">
+  <li><strong>Count queries per request,</strong> not just time. If the count grows with the number of items on the page, you have N+1.</li>
+  <li><strong>Test with realistic sizes.</strong> At 10 items in-process, N+1 cost 0.67 ms here, invisible on a laptop. At 1,000 items over a network, it's a different story.</li>
+  <li><strong>Index the column the per-item query filters on,</strong> even after you fix the N+1. The fixed queries filter on it too.</li>
+  <li><strong>Reach for the ORM switch</strong> (Django: <code>prefetch_related</code>, or <code>select_related</code> for a foreign key; Rails: <code>includes</code> / <code>preload</code> / <code>eager_load</code>) before writing SQL by hand.</li>
+</ol>
+
+<h2 id="data">The data</h2>
+<p>All rows are synthetic. Every timing, plan and count is a real measurement from one run of <a href="https://github.com/tuhuudev/measured/blob/main/labs/n-plus-one/n1_lab.py"><code>labs/n-plus-one/n1_lab.py</code></a>. Raw output: <a href="https://github.com/tuhuudev/measured/blob/main/labs/n-plus-one/results.json"><code>results.json</code></a>. Machine: AMD laptop, Windows 11, Python 3.12.10, SQLite 3.49.1. Medians of 51 runs, or 21 for N = 1,000, 5 for the no-index loop, and 2,001 for the bare round trip. Run it yourself with <code>python labs/n-plus-one/n1_lab.py</code> (standard library only, about a minute).</p>
+<p class="note">Caveats: the "over TCP" server is a toy JSON-over-TCP wrapper around SQLite, running as a thread in the same Python process as the client, not PostgreSQL or MySQL. Every query is still a real TCP round trip. It adds a round trip per query, but not those servers' own protocol and planning costs. Timings include Python's call overhead. Between runs, individual medians moved by up to about 40%, mostly the sub-millisecond and TCP figures. The order of the three strategies and the size of the N+1 gap held.</p>
+
+<h2 id="sources">Sources</h2>
+<ol class="note">
+  <li id="s-sq-np1"><a href="https://www.sqlite.org/np1queryprob.html">SQLite: Many Small Queries Are Efficient In SQLite</a></li>
+  <li id="s-rails"><a href="https://guides.rubyonrails.org/active_record_querying.html#eager-loading-associations">Rails Guides: Active Record Query Interface, eager loading associations</a></li>
+  <li id="s-pg-fk"><a href="https://www.postgresql.org/docs/current/ddl-constraints.html#DDL-CONSTRAINTS-FK">PostgreSQL: Constraints, foreign keys</a></li>
+  <li id="s-sq-fk"><a href="https://www.sqlite.org/foreignkeys.html">SQLite: Foreign key support</a></li>
+  <li id="s-django"><a href="https://docs.djangoproject.com/en/5.2/ref/models/querysets/#prefetch-related">Django: QuerySet API, select_related and prefetch_related</a></li>
+  <li id="s-sq-limits"><a href="https://www.sqlite.org/limits.html">SQLite: Limits (SQLITE_MAX_VARIABLE_NUMBER)</a></li>
+</ol>
+<p class="note">All sources checked 2026-10-12. Found a mistake? <a href="https://github.com/tuhuudev/measured/issues">Open an issue</a>. Corrections are listed in the repo.</p>
+</article>
+</main>
+
+<footer class="site"><div class="wrap">Measured: developer concepts, with numbers you can reproduce. Code MIT, text CC BY 4.0.</div></footer>
+
+<script src="../assets/charts.js"></script>
+<script>
+(function () {
+  const NAMES = { n_plus_one: 'N+1', join: 'JOIN', in_batch: 'IN' };
+  const COLORS = { n_plus_one: 'var(--scan)', join: 'var(--search)', in_batch: 'var(--search)' };
+  const ms = (v) => (v >= 100 ? Math.round(v).toLocaleString('en-US') : v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toFixed(3)) + ' ms';
+  fetch('../labs/n-plus-one/results.json').then((r) => r.json()).then((R) => {
+    const rows = (mode, n) => Object.keys(NAMES).map((k) => ({ label: `${NAMES[k]} (${R[mode][n][k].queries.toLocaleString('en-US')} q)`, v: R[mode][n][k].ms, color: COLORS[k] }));
+    Charts.bars(document.getElementById('chart-tcp'), rows('over_tcp', '1000'), { fmt: ms, note: 'over TCP on localhost' });
+    Charts.bars(document.getElementById('chart-inproc'), rows('in_process', '1000'), { fmt: ms, note: 'in-process' });
+
+    const tb = document.querySelector('#t-all tbody');
+    ['10', '100', '1000'].forEach((n) => Object.keys(NAMES).forEach((k) => {
+      const tr = tb.insertRow();
+      [Number(n).toLocaleString('en-US'), NAMES[k], R.in_process[n][k].queries.toLocaleString('en-US'), ms(R.in_process[n][k].ms), ms(R.over_tcp[n][k].ms)]
+        .forEach((t, i) => { const td = tr.insertCell(); td.textContent = t; if (i >= 2) td.className = 'num'; });
+    }));
+
+    // Calculator: lower bound = measured in-process time + queries x round trip. Slider is log-scaled 0.05 ms .. 100 ms.
+    const nSel = document.getElementById('calc-n'), rtt = document.getElementById('calc-rtt'), rttV = document.getElementById('calc-rtt-v');
+    const rttMs = () => 0.05 * Math.pow(2000, rtt.value / 1000);
+    function draw() {
+      const n = nSel.value, t = rttMs();
+      rttV.textContent = (t < 1 ? t.toFixed(2) : t < 10 ? t.toFixed(1) : t.toFixed(0)) + ' ms';
+      const data = Object.keys(NAMES).map((k) => {
+        const s = R.in_process[n][k];
+        return { label: `${NAMES[k]} (${s.queries.toLocaleString('en-US')} q)`, v: s.ms + s.queries * t, color: COLORS[k] };
+      });
+      Charts.bars(document.getElementById('chart-calc'), data, {
+        fmt: (v) => '≥ ' + (v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 1 : 2) + ' s' : ms(v)),
+        note: `at ${rttV.textContent} per round trip (lower bound)`,
+      });
+    }
+    nSel.addEventListener('change', draw);
+    rtt.addEventListener('input', draw);
+    draw();
+  }).catch(() => {
+    document.querySelectorAll('.chart svg').forEach((s) => { s.outerHTML = '<p class="note">Could not load results.json. The numbers are in the text and in the lab README.</p>'; });
+  });
+})();
+</script>
+</body>
+</html>

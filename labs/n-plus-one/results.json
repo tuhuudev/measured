@@ -1,0 +1,104 @@
+{
+ "sqlite": "3.49.1",
+ "python": "3.12.10",
+ "machine": "AMD64 Family 23 Model 96 Stepping 1, AuthenticAMD",
+ "os": "Windows-11-10.0.26200-SP0",
+ "authors": 10000,
+ "posts": 100000,
+ "posts_per_author": 10,
+ "in_process": {
+  "10": {
+   "n_plus_one": {
+    "queries": 11,
+    "ms": 0.67
+   },
+   "join": {
+    "queries": 1,
+    "ms": 0.193
+   },
+   "in_batch": {
+    "queries": 2,
+    "ms": 0.217
+   }
+  },
+  "100": {
+   "n_plus_one": {
+    "queries": 101,
+    "ms": 5.811
+   },
+   "join": {
+    "queries": 1,
+    "ms": 1.273
+   },
+   "in_batch": {
+    "queries": 2,
+    "ms": 1.099
+   }
+  },
+  "1000": {
+   "n_plus_one": {
+    "queries": 1001,
+    "ms": 60.365
+   },
+   "join": {
+    "queries": 1,
+    "ms": 14.357
+   },
+   "in_batch": {
+    "queries": 2,
+    "ms": 12.165
+   }
+  }
+ },
+ "no_index_n_plus_one_100": {
+  "queries": 101,
+  "ms": 602.2,
+  "plan": "SCAN posts"
+ },
+ "index_plan": "SEARCH posts USING INDEX idx_posts_author (author_id=?)",
+ "tcp_round_trip_ms": 0.1142,
+ "over_tcp": {
+  "10": {
+   "n_plus_one": {
+    "queries": 11,
+    "ms": 2.753
+   },
+   "join": {
+    "queries": 1,
+    "ms": 0.501
+   },
+   "in_batch": {
+    "queries": 2,
+    "ms": 0.943
+   }
+  },
+  "100": {
+   "n_plus_one": {
+    "queries": 101,
+    "ms": 25.841
+   },
+   "join": {
+    "queries": 1,
+    "ms": 2.813
+   },
+   "in_batch": {
+    "queries": 2,
+    "ms": 2.662
+   }
+  },
+  "1000": {
+   "n_plus_one": {
+    "queries": 1001,
+    "ms": 265.874
+   },
+   "join": {
+    "queries": 1,
+    "ms": 29.507
+   },
+   "in_batch": {
+    "queries": 2,
+    "ms": 24.541
+   }
+  }
+ }
+}

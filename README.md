@@ -11,6 +11,7 @@ Every article has:
 | Article | Lab |
 |---|---|
 | [Database indexes, measured](https://tuhuudev.github.io/measured/indexes/) | [`labs/indexes`](labs/indexes) (`python labs/indexes/index_lab.py`) |
+| [The N+1 query problem, measured](https://tuhuudev.github.io/measured/n-plus-one/) | [`labs/n-plus-one`](labs/n-plus-one) (`python labs/n-plus-one/n1_lab.py`) |
 
 The site is plain static HTML with no build step. To preview it, run `python -m http.server` in the repo root and open http://localhost:8000/.
 
