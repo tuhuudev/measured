@@ -91,5 +91,39 @@ window.Charts = (function () {
     });
   }
 
-  return { dumbbell, bars };
+  // Requests per time bucket. opts: bucketMs, untilMs, yMax (shared across small multiples), color, label (tooltip unit),
+  // clipFirst (the first bucket may exceed yMax: it is drawn full height and labelled with its value).
+  function timeline(box, values, opts) {
+    const svg = box.querySelector('svg');
+    svg.textContent = '';
+    const W = Math.max(270, box.clientWidth - 24), H = 110, top = 8, bottom = 22, left = 4, right = 4;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    const n = Math.ceil(opts.untilMs / opts.bucketMs);
+    const bw = (W - left - right) / n, ph = H - top - bottom;
+    el('line', { x1: left, x2: W - right, y1: top + ph, y2: top + ph, class: 'grid' }, svg);
+    const step = opts.untilMs <= 1000 ? 250 : 1000;
+    for (let t = 0; t <= opts.untilMs; t += step) {
+      const x = left + (t / opts.bucketMs) * bw;
+      const lab = el('text', { x: t === 0 ? left : Math.min(x, W - 22), y: H - 6, 'text-anchor': t === 0 ? 'start' : 'middle' }, svg);
+      lab.textContent = t >= 1000 ? t / 1000 + ' s' : t + ' ms';
+    }
+    for (let i = 0; i < n; i++) {
+      const v = values[i] || 0;
+      if (!v) continue;
+      const clipped = opts.clipFirst && i === 0 && v > opts.yMax;
+      const h = clipped ? ph : Math.max(1, v / opts.yMax * ph);
+      // 1px surface gap between adjacent columns
+      el('rect', { x: left + i * bw, y: top + ph - h, width: Math.max(1, bw - 1), height: h, fill: opts.color }, svg);
+      if (clipped) {
+        el('rect', { x: left, y: top + 10, width: Math.max(1, bw - 1), height: 3, fill: 'var(--surface)' }, svg);  // break mark
+        const t = el('text', { x: W - right, y: top + 12, 'text-anchor': 'end' }, svg);
+        t.textContent = `first ${opts.bucketMs} ms: ${v.toLocaleString('en-US')} (off scale)`;
+      }
+      const hit = el('rect', { x: left + i * bw, y: top, width: Math.max(4, bw), height: ph, fill: 'transparent' }, svg);
+      const t0 = i * opts.bucketMs;
+      hover(hit, box, `${t0}–${t0 + opts.bucketMs} ms<br><b>${v}</b> ${esc(opts.label || 'requests')}`);
+    }
+  }
+
+  return { dumbbell, bars, timeline };
 })();

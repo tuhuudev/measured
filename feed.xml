@@ -8,6 +8,13 @@
   <updated>2026-10-12T00:00:00Z</updated>
   <author><name>tuhuudev</name></author>
   <entry>
+    <title>Retries, measured: why backoff needs jitter</title>
+    <link href="https://tuhuudev.github.io/measured/retries/"/>
+    <id>https://tuhuudev.github.io/measured/retries/</id>
+    <updated>2026-10-12T00:00:00Z</updated>
+    <summary>200 clients retry against a busy server: immediately, with exponential backoff, and with jitter. Measured against a real server, with a simulator.</summary>
+  </entry>
+  <entry>
     <title>The N+1 query problem, measured</title>
     <link href="https://tuhuudev.github.io/measured/n-plus-one/"/>
     <id>https://tuhuudev.github.io/measured/n-plus-one/</id>

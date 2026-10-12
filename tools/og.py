@@ -14,6 +14,8 @@ PAGES = [
      ('64.2 ms', 'find one email, no index'), ('0.0031 ms', 'same query, index on email')),
     ('n-plus-one/og.png', ['The N+1 query problem,', 'measured'],
      ('266 ms', 'N+1: 1,001 queries'), ('29.5 ms', 'one JOIN: 1 query')),
+    ('retries/og.png', ['Retries, measured:', 'why backoff needs jitter'],
+     ('3.3 s', 'last client served, backoff'), ('0.46 s', 'last client served, with jitter')),
 ]
 
 def font(name, size):

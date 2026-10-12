@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retries, measured: why backoff needs jitter</title>
+<meta name="description" content="200 clients hit a busy server at once and retry. Retrying immediately, backing off, and backing off with jitter, measured against a real server, plus a simulation you can play with.">
+<link rel="canonical" href="https://tuhuudev.github.io/measured/retries/">
+<meta property="og:title" content="Retries, measured: why backoff needs jitter">
+<meta property="og:description" content="Same server, same 200 clients: the last one finished after 3.3 s with exponential backoff and 0.46 s with jitter. Measured, with a simulation.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://tuhuudev.github.io/measured/retries/">
+<meta property="og:image" content="https://tuhuudev.github.io/measured/retries/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="alternate" type="application/atom+xml" title="Measured" href="https://tuhuudev.github.io/measured/feed.xml">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="../">Measured<span>.</span></a>
+  <nav class="site"><a href="../">All articles</a><a href="https://github.com/tuhuudev/measured">Source</a></nav>
+</div></header>
+
+<main class="wrap">
+<article>
+<h1>Retries, measured: why backoff needs jitter</h1>
+<p class="dek">A server gets busy and starts rejecting requests. Every client retries. Whether everyone gets served in about half a second or keeps getting turned away for seconds depends on one detail: when the retries happen.</p>
+<p class="meta">Published 2026-10-12 · real server on localhost · 200 clients · one laptop · <a href="https://github.com/tuhuudev/measured/tree/main/labs/retries">lab code</a></p>
+
+<div class="hero">
+  <div class="stat scan"><div class="k">Last client served, backoff</div><div class="v">3.3 s</div><div class="p">exponential backoff, no jitter</div></div>
+  <div class="stat search"><div class="k">Last client served, with jitter</div><div class="v">0.46 s</div><div class="p">same backoff, random wait</div></div>
+</div>
+<p class="note">Medians of 7 trials of the same burst, from one full lab run. In the other two runs, the last client finished after 2.4 s and 3.3 s with backoff, and 0.53 s and 0.52 s with jitter. With perfect scheduling, this server could serve all 200 requests in 200 ms.</p>
+
+<h2 id="setup">The setup</h2>
+<p>The lab runs a real TCP server in its own process. It handles at most 20 requests at once, 20 ms each. When all 20 slots are taken, it answers "busy" straight away, like an HTTP 503: "unable to handle the request due to a temporary overload".<sup><a href="#s-rfc9110">[1]</a></sup></p>
+<p>Then 200 clients each send one request at the same moment. That's a thundering herd, like after a deploy or a cache flush. A client that gets "busy" retries, at most 10 attempts in total, using one of three policies:</p>
+<pre><code># n = 0 after the first failure, 1 after the second, ...
+immediate:  wait 0
+backoff:    wait min(1000 ms, 10 ms * 2**n)                  # capped exponential backoff
+jitter:     wait random(0, min(1000 ms, 10 ms * 2**n))       # "full jitter"</code></pre>
+<p>Capped exponential backoff multiplies the wait after each failure, up to a maximum.<sup><a href="#s-aws-blog">[2]</a></sup> The jitter version picks a random wait between zero and that same capped value. AWS's article calls this "Full Jitter".<sup><a href="#s-aws-blog">[2]</a></sup></p>
+
+<h2 id="results">Measured</h2>
+<div class="table-scroll"><table>
+  <thead><tr><th>Policy</th><th class="num">Requests sent</th><th class="num">Clients that gave up</th><th class="num">Median client served</th><th class="num">Last client served</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Retry immediately</strong></td><td class="num">1,512</td><td class="num">120 of 200</td><td class="num">— (gave up)</td><td class="num">75 ms (80 served)</td></tr>
+    <tr><td><strong>Backoff</strong></td><td class="num">1,063</td><td class="num">0</td><td class="num">189 ms</td><td class="num">3,307 ms</td></tr>
+    <tr><td><strong>Backoff + jitter</strong></td><td class="num">901</td><td class="num">0</td><td class="num">95 ms</td><td class="num">459 ms</td></tr>
+  </tbody>
+</table></div>
+<p class="note">Medians over 7 trials. With immediate retries most clients gave up, so the served times aren't comparable: the 80 that got in were served at a median 41 ms, the last at 75 ms, and the other 120 never were. Backoff usually had no failures: in the run shown, at most 5 clients gave up in a trial, and none did in the other two runs. The lab was run three times in full. The run medians for "last client served" ranged 2,379–3,330 ms for backoff and 459–535 ms for jitter. Clients that gave up when retrying immediately ranged 100–120.</p>
+
+<h3>Retry immediately: fast, loud, and half or more of the clients fail</h3>
+<p>The server has 20 slots and each request takes 20 ms. Clients that retry at once burn through all 10 attempts while the slots are still busy. 120 of the 200 clients gave up, and the server took 1,512 requests to serve 80 of them, about 19 requests per success.</p>
+
+<h3>Backoff: (almost) everyone gets in, eventually, in waves</h3>
+<p>Backoff stops the hammering, but every rejected client waits <em>exactly</em> as long as the others. So they come back together, collide again, and 20 get in while the rest are rejected and wait twice as long. You can see the waves below. AWS describes exactly this: "If all the failed calls back off to the same time, they cause contention or overload again when they are retried."<sup><a href="#s-aws-bl">[3]</a></sup> The waits double each round until they hit the 1 s cap, so in this run the last clients finished after more than 3 seconds (2.4 s in another).</p>
+
+<h3>Jitter: the same backoff, spread out</h3>
+<p>With jitter, each client picks a random point within its backoff window. Retries spread across the window instead of landing together, so free slots get used as they open up. Every client got in, and the last one finished at 459 ms. The request count was only a bit lower than plain backoff (901 vs 1,063). In this setup, the big win is time: across the three lab runs, the last client was served about 4 to 7 times sooner (7 times in the run shown).</p>
+
+<figure>
+<div class="legend"><span><i style="background:var(--scan)"></i>requests reaching the server, per 50 ms</span></div>
+<p class="meta" style="margin:8px 0 2px">Retry immediately (own scale)</p>
+<div class="chart" id="tl-immediate"><svg role="img" aria-label="Requests per 50 ms, retry immediately: all within the first 100 ms"></svg><div class="tip"></div></div>
+<p class="meta" style="margin:12px 0 2px">Backoff</p>
+<div class="chart" id="tl-backoff"><svg role="img" aria-label="Requests per 50 ms, backoff: separate waves that get further apart, then come at 1 s intervals, the last after about 3.3 s"></svg><div class="tip"></div></div>
+<p class="meta" style="margin:12px 0 2px">Backoff + jitter (same scale as backoff)</p>
+<div class="chart" id="tl-jitter"><svg role="img" aria-label="Requests per 50 ms, jitter: a spread-out tail, mostly within 0.3 s, the last request at about 0.7 s"></svg><div class="tip"></div></div>
+<figcaption>Every request that reached the server in one trial (the trial with the median request count), over the first 4 seconds. The first 50 ms holds the initial burst, so it's drawn off scale with its count, and the scale fits the retries after it. In this particular trial, the last jittered client finished at 686 ms, slower than the 459 ms median across trials. Measured: real server on localhost, one laptop. Hover or tap a column for the count.</figcaption>
+</figure>
+
+<h2 id="sim">Try it: the same model, simulated</h2>
+<p>This simulation uses the same server model, the same three policies and the same backoff numbers. You can change the number of clients and the network round trip. It's a <strong>simulation</strong>, not a measurement. It has no scheduling noise, so waves without jitter stay perfectly lined up, which is a bit worse than the lab, where noise broke some of them.</p>
+<div class="pg" id="sim-box">
+  <h3>Retry simulator</h3>
+  <div class="row" style="flex-wrap:nowrap">
+    <label for="sim-clients" style="white-space:nowrap"><strong>Clients:</strong></label>
+    <input id="sim-clients" type="range" min="50" max="1000" step="50" value="200" style="flex:1;min-width:0">
+    <span id="sim-clients-v" class="mono" style="min-width:3.5em;text-align:right"></span>
+  </div>
+  <div class="row" style="flex-wrap:nowrap">
+    <label for="sim-rtt" style="white-space:nowrap"><strong>Round trip:</strong></label>
+    <input id="sim-rtt" type="range" min="0" max="100" value="20" style="flex:1;min-width:0">
+    <span id="sim-rtt-v" class="mono" style="min-width:4.5em;text-align:right"></span>
+  </div>
+  <div class="row"><button id="sim-seed" class="secondary">New random seed</button><span class="status" id="sim-seed-v"></span></div>
+  <div class="table-scroll"><table id="sim-table">
+    <thead><tr><th>Policy</th><th class="num">Requests</th><th class="num">Gave up</th><th class="num">Last served</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+  <p class="meta" style="margin:8px 0 2px">Backoff (requests per 50 ms)</p>
+  <div class="chart" id="sim-backoff"><svg role="img" aria-label="Simulated requests per 50 ms with backoff"></svg><div class="tip"></div></div>
+  <p class="meta" style="margin:12px 0 2px">Backoff + jitter (same scale)</p>
+  <div class="chart" id="sim-jitter"><svg role="img" aria-label="Simulated requests per 50 ms with jitter"></svg><div class="tip"></div></div>
+  <p class="note">Server: 20 slots, 20 ms per request, "busy" at once when full. Clients: all start at 0, at most 10 attempts, backoff 10 ms doubling to a 1 s cap. With jitter, the outcome depends on the seed. Across 30 seeds at 200 clients and the default round trip, the simulated jitter run sent a median 971 requests, and its last client finished at a median 451 ms (range 378–964 ms). That's close to the lab's 901 requests and 459 ms. Because nothing in the simulation adds noise, plain backoff keeps its waves perfectly aligned, and its last wave runs out of attempts. Immediate retries also fail more often here than in the lab, because the lab's Python clients are slower between attempts.</p>
+</div>
+
+<h2 id="rules">What to do in your code</h2>
+<ol class="rules">
+  <li><strong>Back off and add jitter.</strong> Google's SRE book is blunt: "Always use randomized exponential backoff when scheduling retries."<sup><a href="#s-sre">[4]</a></sup> AWS's simulation found that backoff without jitter "helps a small amount, but doesn't solve the problem".<sup><a href="#s-aws-blog">[2]</a></sup></li>
+  <li><strong>Cap the attempts.</strong> "Limit retries per request."<sup><a href="#s-sre">[4]</a></sup> A cap only bounds the damage. Without a wait between attempts, the cap just decides how fast clients give up, as the immediate-retry row shows.</li>
+  <li><strong>Consider a retry budget</strong> for the whole process, such as at most 60 retries per minute, failing the request instead of retrying once it's spent.<sup><a href="#s-sre">[4]</a></sup> Not measured here.</li>
+  <li><strong>Listen to the server.</strong> A 503 may come with a <code>Retry-After</code> header telling you when to come back.<sup><a href="#s-rfc9110">[1]</a></sup></li>
+  <li><strong>Only retry what's safe to repeat.</strong> HTTP says a client SHOULD NOT automatically retry a non-idempotent request (a <code>POST</code> that creates an order, say) unless it knows repeating it is safe, or can tell the first one was never applied.<sup><a href="#s-rfc9110-idem">[5]</a></sup></li>
+</ol>
+
+<h2 id="data">The data</h2>
+<p>Every number in the table and the timelines is a real measurement from <a href="https://github.com/tuhuudev/measured/blob/main/labs/retries/retry_lab.py"><code>labs/retries/retry_lab.py</code></a>. Raw output: <a href="https://github.com/tuhuudev/measured/blob/main/labs/retries/results.json"><code>results.json</code></a>, and the two other full runs in <a href="https://github.com/tuhuudev/measured/tree/main/labs/retries/runs"><code>runs/</code></a>. Machine: AMD laptop, Windows 11, Python 3.12.10. Each policy ran 7 trials, and the table shows the medians. Seeds fix the random draws, not the timing, so re-runs vary (the ranges above). Run it yourself with <code>python labs/retries/retry_lab.py</code> (standard library only).</p>
+<p class="note">Caveats and one correction made while building the lab:</p>
+<ul class="note">
+  <li><strong>Windows timer.</strong> By default, Windows rounds <code>asyncio.sleep</code> up to its timer tick of about 15.6 ms. A 20 ms sleep measured about 32.6 ms, which would have distorted every wait. The lab asks for a 1 ms timer (<code>timeBeginPeriod(1)</code>), after which a 20 ms sleep measured about 20.6 ms.</li>
+  <li><strong>Clients share one event loop.</strong> All 200 clients run in one Python process, which sends in small batches a few milliseconds apart. That timing noise affects every policy. It bunches jittered retries a little, but it also breaks up some of backoff's waves: the noise-free simulation is harsher on backoff than the lab. Its net effect on the gap isn't measured here. It's also why the timelines use 50 ms buckets.</li>
+  <li><strong>Toy server.</strong> It rejects instantly when full. Real servers may queue, slow down or time out instead. There's a single burst of clients and no new traffic. Other jitter variants (AWS's article also tests "equal" and "decorrelated" jitter), retry budgets and <code>Retry-After</code> are not measured.</li>
+</ul>
+
+<h2 id="sources">Sources</h2>
+<ol class="note">
+  <li id="s-rfc9110"><a href="https://www.rfc-editor.org/rfc/rfc9110.html#name-503-service-unavailable">RFC 9110 §15.6.4: 503 Service Unavailable</a></li>
+  <li id="s-aws-blog"><a href="https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/">AWS Architecture Blog: Exponential Backoff And Jitter</a></li>
+  <li id="s-aws-bl"><a href="https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter">AWS Builders' Library: Timeouts, retries, and backoff with jitter</a></li>
+  <li id="s-sre"><a href="https://sre.google/sre-book/addressing-cascading-failures/">Google SRE book: Addressing Cascading Failures</a></li>
+  <li id="s-rfc9110-idem"><a href="https://www.rfc-editor.org/rfc/rfc9110.html#name-idempotent-methods">RFC 9110 §9.2.2: Idempotent methods</a></li>
+</ol>
+<p class="note">All sources checked 2026-10-12. Found a mistake? <a href="https://github.com/tuhuudev/measured/issues">Open an issue</a>. Corrections are listed in the repo.</p>
+</article>
+</main>
+
+<footer class="site"><div class="wrap">Measured: developer concepts, with numbers you can reproduce. Code MIT, text CC BY 4.0.</div></footer>
+
+<script src="../assets/charts.js"></script>
+<script src="sim.js"></script>
+<script>
+(function () {
+  const UNTIL = 4000, BUCKET = 50;
+  const bucketize = (arr) => { const b = new Array(UNTIL / BUCKET).fill(0); arr.forEach((t) => { if (t >= 0 && t < UNTIL) b[Math.floor(t / BUCKET)]++; }); return b; };
+  // Measured timelines from the lab.
+  fetch('../labs/retries/results.json').then((r) => r.json()).then((R) => {
+    const P = R.policies;
+    // The first 50 ms holds the initial burst for every policy; scale to the retries after it.
+    const shared = Math.max(...P.backoff.timeline.slice(1), ...P.jitter.timeline.slice(1));
+    const opt = (yMax) => ({ bucketMs: R.bucket_ms, untilMs: UNTIL, yMax, color: 'var(--scan)', label: 'requests', clipFirst: true });
+    Charts.timeline(document.getElementById('tl-immediate'), P.immediate.timeline, opt(Math.max(...P.immediate.timeline.slice(1))));
+    Charts.timeline(document.getElementById('tl-backoff'), P.backoff.timeline, opt(shared));
+    Charts.timeline(document.getElementById('tl-jitter'), P.jitter.timeline, opt(shared));
+  }).catch(() => {
+    document.querySelectorAll('#tl-immediate svg, #tl-backoff svg, #tl-jitter svg').forEach((s) => { s.outerHTML = '<p class="note">Could not load results.json. The numbers are in the table and the lab README.</p>'; });
+  });
+
+  // Simulation.
+  const clients = document.getElementById('sim-clients'), rtt = document.getElementById('sim-rtt');
+  let seed = 1;
+  const rttMs = () => 0.2 * Math.pow(250, rtt.value / 100);        // 0.2 ms .. 50 ms, log scale
+  const NAMES = { immediate: 'Retry immediately', backoff: 'Backoff', jitter: 'Backoff + jitter' };
+  function run() {
+    const n = Number(clients.value), t = rttMs();
+    document.getElementById('sim-clients-v').textContent = n;
+    document.getElementById('sim-rtt-v').textContent = (t < 1 ? t.toFixed(1) : t.toFixed(0)) + ' ms';
+    document.getElementById('sim-seed-v').textContent = 'seed ' + seed;
+    const out = {};
+    Object.keys(NAMES).forEach((p) => { out[p] = RetrySim.simulate({ clients: n, capacity: 20, serviceMs: 20, rttMs: t, baseMs: 10, capMs: 1000, maxAttempts: 10, policy: p, seed }); });
+    const tb = document.querySelector('#sim-table tbody'); tb.textContent = '';
+    Object.keys(NAMES).forEach((p) => {
+      const r = out[p], tr = tb.insertRow();
+      const last = r.lastSuccessMs == null ? '—' : r.lastSuccessMs >= 1000 ? (r.lastSuccessMs / 1000).toFixed(2) + ' s' : Math.round(r.lastSuccessMs) + ' ms';
+      [NAMES[p], r.requests.toLocaleString('en-US'), r.failed + ' of ' + n, last].forEach((v, i) => { const td = tr.insertCell(); td.textContent = v; if (i) td.className = 'num'; });
+    });
+    const b = bucketize(out.backoff.arrivals), j = bucketize(out.jitter.arrivals), shared = Math.max(...b.slice(1), ...j.slice(1));
+    const opt = { bucketMs: BUCKET, untilMs: UNTIL, yMax: shared, color: 'var(--scan)', label: 'simulated requests', clipFirst: true };
+    Charts.timeline(document.getElementById('sim-backoff'), b, opt);
+    Charts.timeline(document.getElementById('sim-jitter'), j, opt);
+  }
+  clients.addEventListener('input', run);
+  rtt.addEventListener('input', run);
+  document.getElementById('sim-seed').addEventListener('click', () => { seed = (seed % 1000) + 1; run(); });
+  run();
+})();
+</script>
+</body>
+</html>
