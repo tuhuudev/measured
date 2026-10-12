@@ -16,7 +16,7 @@
     ['Range of emails', "SELECT count(*) FROM users WHERE email BETWEEN 'user5' AND 'user6'"],
     ['Email ends with…', "SELECT id FROM users WHERE email LIKE '%777@example.com'"],
     ['Lowercased email', `SELECT id FROM users WHERE lower(email) = 'user${target}@example.com'`],
-    ['Last name + first name', "SELECT id FROM users WHERE last_name = 'last777' AND first_name = 'first123'"],
+    ['Last name + first name', "SELECT id FROM users WHERE last_name = 'last123' AND first_name = 'first123'"],
     ['First name only', "SELECT id FROM users WHERE first_name = 'first123'"],
     ['A column with no index', `SELECT id FROM users WHERE name = 'name${target}'`],
   ];
@@ -71,6 +71,14 @@
     return { ms: el / n, n };
   }
 
+  // Only plain SELECTs run, so the table stays unchanged. String literals are blanked before the keyword checks.
+  function isReadonly(sql) {
+    if (/--|\/\*/.test(sql)) return false; // no comments: they could hide a second statement
+    const bare = sql.replace(/'(?:[^']|'')*'/g, "''");
+    return /^\s*(select|with|values)\b/i.test(bare) && !/;\s*\S/.test(bare) &&
+      !/\b(insert|update|delete|drop|create|alter|attach|detach|pragma|vacuum|reindex|analyze)\b/i.test(bare);
+  }
+
   function fmt(ms) {
     if (ms >= 10) return ms.toFixed(0) + ' ms';
     if (ms >= 1) return ms.toFixed(1) + ' ms';
@@ -82,6 +90,8 @@
     const sql = $('#pg-sql').value.trim().replace(/;+\s*$/, '');
     const out = $('.out');
     try {
+      const ro = isReadonly(sql);
+      if (!ro) { out.innerHTML = '<div class="plan">Only SELECT queries run here, so the table stays the same between runs.</div>'; return; }
       const plan = db.exec('EXPLAIN QUERY PLAN ' + sql);
       const lines = plan.length ? plan[0].values.map((r) => String(r[3])) : [];
       const { ms, n } = timeIt(sql);
@@ -92,7 +102,7 @@
           const kind = /^SEARCH/.test(l) ? 'search' : /^SCAN/.test(l) ? 'scan' : '';
           return `<div class="plan">${kind ? `<span class="tag ${kind}">${kind.toUpperCase()}</span>` : ''}${esc(l)}</div>`;
         }).join('') +
-        `<div class="time">${fmt(ms)} <span class="status">per query · average of ${n} runs · ${count} row${count === 1 ? '' : 's'} returned</span></div>`;
+        `<div class="time">${fmt(ms)} <span class="status">per query · average of ${n} run${n === 1 ? '' : 's'} · ${count} row${count === 1 ? '' : 's'} returned</span></div>`;
     } catch (err) {
       out.innerHTML = `<div class="plan">Error: ${esc(String(err.message || err))}</div>`;
     }

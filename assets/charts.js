@@ -57,6 +57,9 @@ window.Charts = (function () {
         el('circle', { cx: x(r[k]), cy: y, r: 6, fill: color, stroke: 'var(--surface)', 'stroke-width': 2 }, svg);
         const lab = el('text', { x: x(r[k]) + dx, y: y + 4, 'text-anchor': anchor }, svg);
         lab.textContent = fmt(r[k]);
+        // keep the label inside the plot: flip it above the dot if it would run off either edge
+        const bb = lab.getBBox();
+        if (bb.x + bb.width > W - 2 || bb.x < 2) { lab.setAttribute('x', x(r[k])); lab.setAttribute('y', y - 10); lab.setAttribute('text-anchor', 'middle'); }
         const hit = el('circle', { cx: x(r[k]), cy: y, r: 16, fill: 'transparent' }, svg);
         hover(hit, box, `<b>${esc(r.q)}</b><br>${fmt(r[k])}<br>${esc(r[k + 'Plan'])}`);
       });
