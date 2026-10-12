@@ -1,0 +1,65 @@
+{
+ "sqlite": "3.49.1",
+ "python": "3.12.10",
+ "machine": "AMD64 Family 23 Model 96 Stepping 1, AuthenticAMD",
+ "os": "Windows-11-10.0.26200-SP0",
+ "rows": 1000000,
+ "no_index": {
+  "eq_plan": "SCAN users",
+  "eq_ms": 64.2463,
+  "order_plan": "SCAN users / USE TEMP B-TREE FOR ORDER BY",
+  "order_ms": 93.6626
+ },
+ "create_index_ms": 534,
+ "with_index": {
+  "eq_plan": "SEARCH users USING COVERING INDEX idx_email (email=?)",
+  "eq_ms": 0.0031,
+  "order_plan": "SCAN users USING COVERING INDEX idx_email",
+  "order_ms": 0.0052,
+  "range_plan": "SEARCH users USING COVERING INDEX idx_email (email>? AND email<?)",
+  "suffix_like_plan": "SCAN users USING COVERING INDEX idx_email",
+  "other_column_plan": "SCAN users",
+  "other_column_ms": 69.2722,
+  "function_plan": "SCAN users USING COVERING INDEX idx_email",
+  "function_ms": 196.9133
+ },
+ "expression_index": {
+  "function_plan": "SEARCH users USING COVERING INDEX idx_lower_email (<expr>=?)",
+  "function_ms": 0.0031
+ },
+ "composite": {
+  "last": {
+   "plan": "SEARCH users USING COVERING INDEX idx_last_first (last_name=?)",
+   "ms": 0.3661
+  },
+  "last_first": {
+   "plan": "SEARCH users USING COVERING INDEX idx_last_first (last_name=? AND first_name=?)",
+   "ms": 0.0038
+  },
+  "first_only": {
+   "plan": "SCAN users USING COVERING INDEX idx_last_first",
+   "ms": 63.9141
+  },
+  "first_only_after_analyze": {
+   "plan": "SEARCH users USING COVERING INDEX idx_last_first (ANY(last_name) AND first_name=?)",
+   "ms": 2.5521
+  }
+ },
+ "size": {
+  "db_bytes_without_index": 59129856,
+  "db_bytes_with_index": 90193920
+ },
+ "index_shape": {
+  "page_size": 4096,
+  "levels": 3,
+  "leaf_pages": 7519,
+  "leaf_entries": 992482,
+  "interior_entries": 7518,
+  "entries_per_leaf": 132.0
+ },
+ "insert_200k_ms": {
+  "0": 374,
+  "1": 551,
+  "3": 1015
+ }
+}

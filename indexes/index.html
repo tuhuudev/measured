@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Database indexes, measured</title>
+<meta name="description" content="One million rows, one laptop, real query plans: which queries a database index speeds up, which it can't, and what each index costs. With an in-browser SQLite playground.">
+<link rel="canonical" href="https://tuhuudev.github.io/measured/indexes/">
+<meta property="og:title" content="Database indexes, measured">
+<meta property="og:description" content="64 ms → 3 µs for one lookup, and what that index costs on every insert. Measured on 1M rows, with a playground you can run in your browser.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="../">Measured<span>.</span></a>
+  <nav class="site"><a href="../">All articles</a><a href="https://github.com/tuhuudev/measured">Source</a></nav>
+</div></header>
+
+<main class="wrap">
+<article>
+<h1>Database indexes, measured</h1>
+<p class="dek">Which queries an index actually speeds up, which ones it silently can't, and what every extra index costs you. Every number here comes from one script you can run yourself.</p>
+<p class="meta">Published 2026-10-12 · SQLite 3.49.1 · 1,000,000 rows · one laptop · <a href="https://github.com/tuhuudev/measured/tree/main/labs/indexes">lab code</a></p>
+
+<div class="hero">
+  <div class="stat scan"><div class="k">Find one email, no index</div><div class="v">64.2 ms</div><div class="p"><span class="tag scan">SCAN</span><span class="mono">users</span></div></div>
+  <div class="stat search"><div class="k">Same query, index on email</div><div class="v">0.0031 ms</div><div class="p"><span class="tag search">SEARCH</span><span class="mono">idx_email (email=?)</span></div></div>
+</div>
+<p class="note">Medians of repeated runs on an in-memory database, so no disk and no network are involved. Your machine will give other numbers; the gap between them is the point.</p>
+
+<p>That is about 20,000 times faster for adding one line of SQL. It's also why "just add an index" is the usual advice, and why it's incomplete. The same index did nothing for three other queries on the same column. It made the database 53% bigger, and it made every insert slower. Below, each of those claims is measured, and you can run the queries yourself in the playground.</p>
+
+<h2 id="playground">Try it first</h2>
+<p>This is real SQLite, compiled to WebAssembly and running in your browser. It builds a 100,000-row version of the same table. Run a query, then add an index and run it again. Watch the plan flip from <span class="tag scan">SCAN</span> to <span class="tag search">SEARCH</span>.</p>
+
+<div class="pg" id="pg" data-rows="100000">
+  <h3>Index playground</h3>
+  <div class="row"><button id="pg-build">Build the table</button><span class="status">Nothing loaded yet. Building takes a second or two.</span></div>
+  <div class="row">
+    <strong>Indexes:</strong>
+    <label><input type="checkbox" value="idx_email" disabled> <code>(email)</code></label>
+    <label><input type="checkbox" value="idx_lower_email" disabled> <code>(lower(email))</code></label>
+    <label><input type="checkbox" value="idx_last_first" disabled> <code>(last_name, first_name)</code></label>
+    <button id="pg-analyze" class="secondary" disabled>Run ANALYZE</button>
+  </div>
+  <select id="pg-preset" aria-label="Example queries"></select>
+  <textarea id="pg-sql" spellcheck="false" aria-label="SQL query"></textarea>
+  <div class="row"><button id="pg-run" disabled>Explain and time</button></div>
+  <div class="out" aria-live="polite"><span class="status">The query plan and timing appear here.</span></div>
+  <p class="note">Table: <code>users(id, email, name, last_name, first_name)</code>, with <code>user{i}@example.com</code>, 1,000 distinct last names and 997 distinct first names. Browser timings are noisier than the lab's, and your query can be anything you like.</p>
+</div>
+
+<h2 id="scan">Without an index, the database reads every row</h2>
+<p>Ask for <code>WHERE email = 'user777777@example.com'</code> on a table with no index, and the database has no idea where that row lives. It has to scan the entire table, row by row, and check each one.<sup><a href="#s-pg-intro">[1]</a></sup> SQLite's plan says exactly that: <span class="tag scan">SCAN</span><span class="mono">users</span>. On one million rows that took a median 64.2 ms.</p>
+<p>A scan costs time proportional to the number of rows, N. Double the table and you double the wait.<sup><a href="#s-sq-planner">[2]</a></sup></p>
+
+<h2 id="what">What an index is</h2>
+<p>An index is a separate structure that keeps one column's values <strong>in sorted order</strong>, each with a pointer back to its row. Because it's sorted, a lookup costs about log N steps instead of N.<sup><a href="#s-sq-planner">[2]</a></sup></p>
+<p>The usual shape is a B-tree, a tree of fixed-size pages. Upper pages point to the next level down, and leaf pages hold entries that point to table rows.<sup><a href="#s-pg-btree">[3]</a></sup> A lookup walks a few levels down that tree instead of scanning.<sup><a href="#s-pg-intro">[1]</a></sup> B-tree is the default: <code>CREATE INDEX</code> in PostgreSQL creates one unless you ask for something else.<sup><a href="#s-pg-types">[4]</a></sup></p>
+
+<figure>
+<div class="chart">
+<svg viewBox="0 0 640 230" role="img" aria-label="The email index read from the database file: 3 levels, a root page, interior pages, and 7,519 leaf pages holding about 132 entries each.">
+  <g stroke="var(--ink-3)" stroke-width="1.5" fill="none">
+    <path d="M320 52 L170 98"/><path d="M320 52 L320 98"/><path d="M320 52 L470 98"/>
+    <path d="M170 128 L70 172"/><path d="M170 128 L150 172"/><path d="M320 128 L280 172"/><path d="M320 128 L360 172"/><path d="M470 128 L490 172"/><path d="M470 128 L570 172"/>
+  </g>
+  <g fill="var(--surface)" stroke="var(--search)" stroke-width="2">
+    <rect x="270" y="22" width="100" height="30" rx="4"/>
+    <rect x="120" y="98" width="100" height="30" rx="4"/><rect x="270" y="98" width="100" height="30" rx="4"/><rect x="420" y="98" width="100" height="30" rx="4"/>
+    <rect x="40" y="172" width="60" height="26" rx="4"/><rect x="120" y="172" width="60" height="26" rx="4"/><rect x="250" y="172" width="60" height="26" rx="4"/><rect x="330" y="172" width="60" height="26" rx="4"/><rect x="460" y="172" width="60" height="26" rx="4"/><rect x="540" y="172" width="60" height="26" rx="4"/>
+  </g>
+  <text x="320" y="42" text-anchor="middle" class="lbl">root page</text>
+  <text x="170" y="118" text-anchor="middle" class="lbl">interior</text><text x="320" y="118" text-anchor="middle" class="lbl">interior</text><text x="470" y="118" text-anchor="middle" class="lbl">interior</text>
+  <text x="215" y="190" text-anchor="middle">…</text><text x="425" y="190" text-anchor="middle">…</text>
+  <text x="20" y="42">level 1</text><text x="20" y="118">level 2</text><text x="20" y="226">level 3: 7,519 leaf pages · ~132 entries each · 4,096-byte pages</text>
+</svg>
+</div>
+<figcaption>The real shape of <code>idx_email</code> on 1,000,000 rows, read page by page from the database file: 3 levels deep. The number of pages drawn on levels 2 and 3 is schematic. SQLite also keeps some keys in interior pages, 7,518 of the 1,000,000 here.<sup><a href="#s-sq-format">[5]</a></sup></figcaption>
+</figure>
+
+<p>Three levels for a million entries is why the lookup is so fast. The database reads one page per level, then follows the pointer. With the index in place, the plan becomes <span class="tag search">SEARCH</span><span class="mono">users USING COVERING INDEX idx_email (email=?)</span>, and the median time drops to 0.0031 ms. <code>COVERING</code> means the index alone holds every column the query asked for, so the table itself isn't read at all.<sup><a href="#s-sq-eqp">[6]</a></sup> Our query only selected <code>id</code>, which SQLite keeps inside each index entry. A <code>SELECT *</code> would add one hop from the index to the row.</p>
+
+<h2 id="helps">Queries an index helps</h2>
+<p>A B-tree index serves conditions on data that can be sorted: <code>=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>, <code>BETWEEN</code> and <code>IN</code>.<sup><a href="#s-pg-types">[4]</a></sup> For a range, it searches once for the first matching entry and then reads the following entries in order.<sup><a href="#s-sq-planner">[2]</a></sup> Our <code>email BETWEEN 'user5' AND 'user6'</code> was a <span class="tag search">SEARCH</span><span class="mono">(email&gt;? AND email&lt;?)</span>.</p>
+<p>It also helps with sorting. An index already holds rows in order, so <code>ORDER BY email</code> needs no separate sort. With <code>LIMIT 10</code>, the first ten rows come straight off the index without the rest being read.<sup><a href="#s-pg-order">[7]</a></sup> Without the index, SQLite scanned everything and built a temporary B-tree to sort it (<span class="mono">USE TEMP B-TREE FOR ORDER BY</span>), which took 93.7 ms. With the index it took 0.0052 ms.</p>
+
+<figure>
+<div class="chart" id="chart-lookups">
+  <div class="legend"><span><i style="background:var(--scan)"></i>slow plan</span><span><i style="background:var(--search)"></i>fast plan</span></div>
+  <svg id="lookups-svg" role="img" aria-label="Median query time, log scale: four queries, slow plan versus fast plan"></svg>
+  <div class="tip"></div>
+</div>
+<figcaption>Median time per query, on a <strong>log scale</strong> where each gridline is 10× the one before. Hover or tap a dot for the plan. Measured: SQLite in memory · 1M rows · one laptop. <a href="#data">Table view</a>.</figcaption>
+</figure>
+
+<h2 id="cant">Queries the same index can't help</h2>
+<p>An index only helps when the query can follow its sorted order. With <code>idx_email</code> in place, all three of these were still scans:</p>
+<ul>
+  <li><strong>A different column.</strong> <code>WHERE name = ?</code> took 69.3 ms with <span class="tag scan">SCAN</span><span class="mono">users</span>. The email index knows nothing about names.</li>
+  <li><strong>A pattern that doesn't start at the beginning.</strong> In <code>WHERE email LIKE '%777@example.com'</code> the start of the string is unknown, so there is no place in the sorted order to jump to.<sup><a href="#s-pg-types">[4]</a></sup> SQLite read the whole index instead (<span class="mono">SCAN users USING COVERING INDEX idx_email</span>). That's still a scan.<sup><a href="#s-sq-eqp">[6]</a></sup></li>
+  <li><strong>A function wrapped around the column.</strong> <code>WHERE lower(email) = ?</code> took 196.9 ms. The index stores <code>email</code>, not <code>lower(email)</code>. SQLite's docs put it bluntly: the planner "does not do algebra".<sup><a href="#s-sq-expr">[8]</a></sup></li>
+</ul>
+<p>The fix for the last one is an index on the expression itself, <code>CREATE INDEX idx_lower_email ON users(lower(email))</code>. With it the plan became <span class="tag search">SEARCH</span><span class="mono">idx_lower_email (&lt;expr&gt;=?)</span> at 0.0031 ms. The query has to write the expression exactly as the index does.<sup><a href="#s-sq-expr">[8]</a></sup> And an expression index is extra work on every insert and update, because the expression is computed for each row.<sup><a href="#s-pg-expr">[9]</a></sup> Often the cheaper fix is to store emails lowercased in the first place and compare the column directly.</p>
+
+<h2 id="order">Multi-column indexes: the leftmost column decides</h2>
+<p>An index on <code>(last_name, first_name)</code> is sorted by <code>last_name</code> first. <code>first_name</code> only breaks ties within the same last name, like a phone book.<sup><a href="#s-sq-planner">[2]</a></sup> It's most efficient when the query constrains the leading column. Conditions on later columns alone don't necessarily narrow what has to be read.<sup><a href="#s-pg-multi">[10]</a></sup></p>
+<div class="table-scroll"><table>
+  <thead><tr><th>Query, with index on <code>(last_name, first_name)</code></th><th>Plan</th><th class="num">Median</th></tr></thead>
+  <tbody>
+    <tr><td><code>last_name = ? AND first_name = ?</code></td><td><span class="tag search">SEARCH</span></td><td class="num">0.0038 ms</td></tr>
+    <tr><td><code>last_name = ?</code> (1,000 matching rows)</td><td><span class="tag search">SEARCH</span></td><td class="num">0.366 ms</td></tr>
+    <tr><td><code>first_name = ?</code></td><td><span class="tag scan">SCAN</span> whole index</td><td class="num">63.9 ms</td></tr>
+    <tr><td><code>first_name = ?</code> after <code>ANALYZE</code></td><td><span class="tag search">SEARCH</span> <span class="mono">ANY(last_name)</span></td><td class="num">2.55 ms</td></tr>
+  </tbody>
+</table></div>
+<p>The last row is a <strong>skip scan</strong>. When the first column has few distinct values, the database can do one search per distinct last name. SQLite only considers this after <code>ANALYZE</code> has measured how many duplicates there are.<sup><a href="#s-sq-opt">[11]</a></sup> PostgreSQL 18's B-tree can skip scan too, under similar conditions.<sup><a href="#s-pg-multi">[10]</a></sup> It beat the full scan, but it was still about 670 times slower than the query that named both columns. Put the column you always filter on first.</p>
+
+<h2 id="cost">What every index costs</h2>
+<p>An index is a second copy of your data that the database has to keep in sync with the table. That adds overhead to every insert, update and delete.<sup><a href="#s-pg-intro">[1]</a></sup> When a leaf page fills up, it splits: some of its entries move to a new page and the parent gets a new pointer. Splits can cascade up, and a root split adds a level.<sup><a href="#s-pg-btree">[3]</a></sup></p>
+
+<figure>
+<div class="chart" id="chart-inserts">
+  <svg id="inserts-svg" role="img" aria-label="Time to insert 200,000 rows: 374 ms with no secondary index, 551 ms with one, 1,015 ms with three"></svg>
+  <div class="tip"></div>
+</div>
+<figcaption>Inserting 200,000 rows into a fresh table: median of 3 runs. In-memory batch insert, so disk, WAL and concurrency on a real server add more on top.</figcaption>
+</figure>
+
+<p>One index made the insert batch 47% slower. Three made it 2.7 times slower. Space costs too: adding the email index grew the database from 59.1 MB to 90.2 MB, which is 53% bigger for one index on one column.</p>
+
+<h2 id="explain">Read the plan before you add an index</h2>
+<p>Every database will tell you what it plans to do, and you don't have to guess.<sup><a href="#s-pg-explain">[12]</a></sup></p>
+<pre><code>-- SQLite
+EXPLAIN QUERY PLAN SELECT id FROM users WHERE email = ?;
+--> SEARCH users USING COVERING INDEX idx_email (email=?)
+
+-- PostgreSQL
+EXPLAIN SELECT id FROM users WHERE email = $1;
+--> Index Scan using idx_email on users ...</code></pre>
+<p>In SQLite, <span class="tag scan">SCAN</span> means every row, or every index entry, is visited. <span class="tag search">SEARCH</span> means only a subset is.<sup><a href="#s-sq-eqp">[6]</a></sup> In PostgreSQL, a full scan shows as <code>Seq Scan</code> and index access as <code>Index Scan</code>, <code>Index Only Scan</code> or <code>Bitmap Index Scan</code> + <code>Bitmap Heap Scan</code>.<sup><a href="#s-pg-explain">[12]</a></sup></p>
+
+<h2 id="rules">Rules of thumb</h2>
+<ol class="rules">
+  <li><strong>Read the plan first.</strong> If it already says <code>SEARCH</code> or <code>Index Scan</code>, a new index won't help.</li>
+  <li><strong>Index the columns you filter, join or sort on</strong>, and write the condition on the bare column: <code>email = ?</code>, not <code>lower(email) = ?</code>.</li>
+  <li><strong>In a multi-column index, put the column you always filter on first.</strong></li>
+  <li><strong>A leading wildcard (<code>LIKE '%x'</code>) can't use a B-tree index</strong> to narrow the search.</li>
+  <li><strong>Every index slows every write and takes disk space.</strong> Drop the ones no query uses.</li>
+</ol>
+
+<h2 id="data">The data</h2>
+<p>All rows are synthetic (<code>user{i}@example.com</code> and so on). Every timing, plan, page count and size is a real measurement from one run of <a href="https://github.com/tuhuudev/measured/blob/main/labs/indexes/index_lab.py"><code>labs/indexes/index_lab.py</code></a>. Raw output: <a href="https://github.com/tuhuudev/measured/blob/main/labs/indexes/results.json"><code>results.json</code></a>. Machine: AMD laptop, Windows 11, Python 3.12.10, SQLite 3.49.1. Medians of 15 runs, or 201 for sub-millisecond lookups. Run it yourself with <code>python labs/indexes/index_lab.py</code> (standard library only).</p>
+<div class="table-scroll"><table id="data-table">
+  <thead><tr><th>Query</th><th>Plan</th><th class="num">Median</th></tr></thead>
+  <tbody></tbody>
+</table></div>
+<p class="note">Caveats: SQLite only, measured in memory on one machine. PostgreSQL and other databases give different absolute numbers. Only B-tree indexes are covered, not hash, GIN, BRIN or partial indexes. We make no claim about prefix patterns like <code>LIKE 'abc%'</code>, because whether they use an index depends on collation and case-sensitivity settings.</p>
+
+<h2 id="sources">Sources</h2>
+<ol class="note">
+  <li id="s-pg-intro"><a href="https://www.postgresql.org/docs/current/indexes-intro.html">PostgreSQL: Indexes, introduction</a></li>
+  <li id="s-sq-planner"><a href="https://www.sqlite.org/queryplanner.html">SQLite: Query planning</a></li>
+  <li id="s-pg-btree"><a href="https://www.postgresql.org/docs/current/btree.html">PostgreSQL: B-Tree indexes, implementation</a></li>
+  <li id="s-pg-types"><a href="https://www.postgresql.org/docs/current/indexes-types.html">PostgreSQL: Index types</a></li>
+  <li id="s-sq-format"><a href="https://www.sqlite.org/fileformat2.html">SQLite: Database file format §1.6</a></li>
+  <li id="s-sq-eqp"><a href="https://www.sqlite.org/eqp.html">SQLite: EXPLAIN QUERY PLAN</a></li>
+  <li id="s-pg-order"><a href="https://www.postgresql.org/docs/current/indexes-ordering.html">PostgreSQL: Indexes and ORDER BY</a></li>
+  <li id="s-sq-expr"><a href="https://www.sqlite.org/expridx.html">SQLite: Indexes on expressions</a></li>
+  <li id="s-pg-expr"><a href="https://www.postgresql.org/docs/current/indexes-expressional.html">PostgreSQL: Indexes on expressions</a></li>
+  <li id="s-pg-multi"><a href="https://www.postgresql.org/docs/current/indexes-multicolumn.html">PostgreSQL: Multicolumn indexes</a></li>
+  <li id="s-sq-opt"><a href="https://www.sqlite.org/optoverview.html">SQLite: Query optimizer overview §6, skip-scan</a></li>
+  <li id="s-pg-explain"><a href="https://www.postgresql.org/docs/current/using-explain.html">PostgreSQL: Using EXPLAIN</a></li>
+</ol>
+<p class="note">All sources checked 2026-10-08. Found a mistake? <a href="https://github.com/tuhuudev/measured/issues">Open an issue</a>. Corrections are listed in the repo.</p>
+</article>
+</main>
+
+<footer class="site"><div class="wrap">Measured: developer concepts, with numbers you can reproduce. Code MIT, text CC BY 4.0.</div></footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+<script src="../assets/playground.js"></script>
+<script src="../assets/charts.js"></script>
+<script>
+fetch('../labs/indexes/results.json').then((r) => r.json()).then((R) => {
+  const rows = [
+    { q: 'email = ?', slow: R.no_index.eq_ms, slowPlan: R.no_index.eq_plan + ' (no index)', fast: R.with_index.eq_ms, fastPlan: R.with_index.eq_plan },
+    { q: 'ORDER BY email LIMIT 10', slow: R.no_index.order_ms, slowPlan: R.no_index.order_plan + ' (no index)', fast: R.with_index.order_ms, fastPlan: R.with_index.order_plan },
+    { q: 'lower(email) = ?', slow: R.with_index.function_ms, slowPlan: R.with_index.function_plan + ' (index on email only)', fast: R.expression_index.function_ms, fastPlan: R.expression_index.function_plan },
+    { q: 'first_name = ? on (last, first)', slow: R.composite.first_only.ms, slowPlan: R.composite.first_only.plan + ' (no statistics)', fast: R.composite.first_only_after_analyze.ms, fastPlan: R.composite.first_only_after_analyze.plan + ' (after ANALYZE)' },
+  ];
+  Charts.dumbbell(document.getElementById('chart-lookups'), rows);
+  const ins = R.insert_200k_ms;
+  Charts.bars(document.getElementById('chart-inserts'), [
+    { label: 'no secondary index', v: ins['0'] }, { label: '1 index', v: ins['1'] }, { label: '3 indexes', v: ins['3'] },
+  ]);
+  const tb = document.querySelector('#data-table tbody');
+  const add = (q, plan, ms) => { const tr = tb.insertRow(); [q, plan, ms].forEach((t, i) => { const td = tr.insertCell(); td.textContent = t; if (i === 1) td.className = 'mono'; if (i === 2) td.className = 'num'; }); };
+  rows.forEach((r) => { add(r.q, r.slowPlan, r.slow + ' ms'); add(r.q, r.fastPlan, r.fast + ' ms'); });
+  add('name = ?', R.with_index.other_column_plan, R.with_index.other_column_ms + ' ms');
+  add('CREATE INDEX idx_email', '', R.create_index_ms + ' ms');
+  add('database size', 'without → with idx_email', (R.size.db_bytes_without_index / 1e6).toFixed(1) + ' → ' + (R.size.db_bytes_with_index / 1e6).toFixed(1) + ' MB');
+});
+</script>
+</body>
+</html>
