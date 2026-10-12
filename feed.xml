@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Measured</title>
+  <subtitle>Developer concepts, with numbers you can reproduce.</subtitle>
+  <link href="https://tuhuudev.github.io/measured/"/>
+  <link rel="self" href="https://tuhuudev.github.io/measured/feed.xml"/>
+  <id>https://tuhuudev.github.io/measured/</id>
+  <updated>2026-10-12T00:00:00Z</updated>
+  <author><name>tuhuudev</name></author>
+  <entry>
+    <title>The N+1 query problem, measured</title>
+    <link href="https://tuhuudev.github.io/measured/n-plus-one/"/>
+    <id>https://tuhuudev.github.io/measured/n-plus-one/</id>
+    <updated>2026-10-12T00:00:00Z</updated>
+    <summary>1,001 queries versus 1 or 2: measured in-process and over a localhost TCP round trip, with a round-trip calculator and what a missing index does.</summary>
+  </entry>
+  <entry>
+    <title>Database indexes, measured</title>
+    <link href="https://tuhuudev.github.io/measured/indexes/"/>
+    <id>https://tuhuudev.github.io/measured/indexes/</id>
+    <updated>2026-10-12T00:00:00Z</updated>
+    <summary>One million rows, real query plans: which queries an index speeds up, which it cannot, and what each index costs. With an in-browser SQLite playground.</summary>
+  </entry>
+</feed>

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://tuhuudev.github.io/measured/sitemap.xml
