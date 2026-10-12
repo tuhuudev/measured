@@ -98,7 +98,7 @@ jitter:     wait random(0, min(1000 ms, 10 ms * 2**n))       # "full jitter"</co
   <div class="chart" id="sim-backoff"><svg role="img" aria-label="Simulated requests per 50 ms with backoff"></svg><div class="tip"></div></div>
   <p class="meta" style="margin:12px 0 2px">Backoff + jitter (same scale)</p>
   <div class="chart" id="sim-jitter"><svg role="img" aria-label="Simulated requests per 50 ms with jitter"></svg><div class="tip"></div></div>
-  <p class="note">Server: 20 slots, 20 ms per request, "busy" at once when full. Clients: all start at 0, at most 10 attempts, backoff 10 ms doubling to a 1 s cap. With jitter, the outcome depends on the seed. Across 30 seeds at 200 clients and the default round trip, the simulated jitter run sent a median 971 requests, and its last client finished at a median 451 ms (range 378–964 ms). That's close to the lab's 901 requests and 459 ms. Because nothing in the simulation adds noise, plain backoff keeps its waves perfectly aligned, and its last wave runs out of attempts. Immediate retries also fail more often here than in the lab, because the lab's Python clients are slower between attempts.</p>
+  <p class="note">Server: 20 slots, 20 ms per request, "busy" at once when full. Clients: all start at 0, at most 10 attempts, backoff 10 ms doubling to a 1 s cap. With jitter, the outcome depends on the seed. The simulator starts at seed 18, whose jitter result sits at the median of 30 seeds. Across 30 seeds at 200 clients and the default round trip, the simulated jitter run sent a median 971 requests, and its last client finished at a median 451 ms (range 378–964 ms). That's close to the lab's 901 requests and 459 ms. Because nothing in the simulation adds noise, plain backoff keeps its waves perfectly aligned, and its last wave runs out of attempts. Immediate retries also fail more often here than in the lab, because the lab's Python clients are slower between attempts.</p>
 </div>
 
 <h2 id="rules">What to do in your code</h2>
@@ -154,7 +154,7 @@ jitter:     wait random(0, min(1000 ms, 10 ms * 2**n))       # "full jitter"</co
 
   // Simulation.
   const clients = document.getElementById('sim-clients'), rtt = document.getElementById('sim-rtt');
-  let seed = 1;
+  let seed = 18;   // starts at a typical seed: its jitter result sits at the 30-seed median (see the note below)
   const rttMs = () => 0.2 * Math.pow(250, rtt.value / 100);        // 0.2 ms .. 50 ms, log scale
   const NAMES = { immediate: 'Retry immediately', backoff: 'Backoff', jitter: 'Backoff + jitter' };
   function run() {
