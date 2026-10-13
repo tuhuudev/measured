@@ -5,8 +5,15 @@
   <link href="https://tuhuudev.github.io/measured/"/>
   <link rel="self" href="https://tuhuudev.github.io/measured/feed.xml"/>
   <id>https://tuhuudev.github.io/measured/</id>
-  <updated>2026-10-12T00:00:00Z</updated>
+  <updated>2026-10-13T00:00:00Z</updated>
   <author><name>tuhuudev</name></author>
+  <entry>
+    <title>Pagination, measured: OFFSET vs keyset</title>
+    <link href="https://tuhuudev.github.io/measured/pagination/"/>
+    <id>https://tuhuudev.github.io/measured/pagination/</id>
+    <updated>2026-10-13T00:00:00Z</updated>
+    <summary>Paging through one million rows with LIMIT/OFFSET and with a keyset cursor: how OFFSET slows down page by page and repeats or loses rows when data changes. With an in-browser SQLite demo.</summary>
+  </entry>
   <entry>
     <title>Retries, measured: why backoff needs jitter</title>
     <link href="https://tuhuudev.github.io/measured/retries/"/>

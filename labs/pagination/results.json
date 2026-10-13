@@ -1,0 +1,101 @@
+{
+ "sqlite": "3.49.1",
+ "python": "3.12.10",
+ "machine": "AMD64 Family 23 Model 96 Stepping 1, AuthenticAMD",
+ "os": "Windows-11-10.0.26200-SP0",
+ "rows": 1000000,
+ "page_size": 20,
+ "plans": {
+  "offset": "SCAN posts USING INDEX idx_created",
+  "keyset": "SEARCH posts USING INDEX idx_created (created_at<?)"
+ },
+ "pages": [
+  {
+   "page": 1,
+   "offset": 0,
+   "offset_ms": 0.0213,
+   "keyset_ms": 0.0209,
+   "offset_vm_steps": 200,
+   "keyset_vm_steps": 200
+  },
+  {
+   "page": 10,
+   "offset": 180,
+   "offset_ms": 0.026,
+   "keyset_ms": 0.0228,
+   "offset_vm_steps": 700,
+   "keyset_vm_steps": 300
+  },
+  {
+   "page": 100,
+   "offset": 1980,
+   "offset_ms": 0.0745,
+   "keyset_ms": 0.0229,
+   "offset_vm_steps": 6100,
+   "keyset_vm_steps": 300
+  },
+  {
+   "page": 1000,
+   "offset": 19980,
+   "offset_ms": 0.5414,
+   "keyset_ms": 0.0231,
+   "offset_vm_steps": 60200,
+   "keyset_vm_steps": 300
+  },
+  {
+   "page": 10000,
+   "offset": 199980,
+   "offset_ms": 5.4387,
+   "keyset_ms": 0.0227,
+   "offset_vm_steps": 600100,
+   "keyset_vm_steps": 300
+  },
+  {
+   "page": 50000,
+   "offset": 999980,
+   "offset_ms": 26.816,
+   "keyset_ms": 0.0221,
+   "offset_vm_steps": 3000100,
+   "keyset_vm_steps": 300
+  }
+ ],
+ "last_page_ids_only_ms": 11.1452,
+ "last_page_ids_only_plan": "SCAN posts USING COVERING INDEX idx_created",
+ "count": {
+  "plan": "SCAN posts USING COVERING INDEX idx_created",
+  "ms": 0.1774
+ },
+ "walk_all": {
+  "with_tiebreak": {
+   "rows_seen": 1000000,
+   "distinct": 1000000
+  },
+  "created_at_only": {
+   "rows_seen": 952380,
+   "distinct": 952380,
+   "missed": 47620
+  }
+ },
+ "writes_between_pages": {
+  "insert_5_newer": {
+   "offset": {
+    "repeated_from_page_1": 5,
+    "never_shown": 0
+   },
+   "keyset": {
+    "repeated_from_page_1": 0,
+    "never_shown": 0
+   }
+  },
+  "delete_5_on_page_1": {
+   "offset": {
+    "repeated_from_page_1": 0,
+    "never_shown": 5
+   },
+   "keyset": {
+    "repeated_from_page_1": 0,
+    "never_shown": 0
+   }
+  }
+ }
+}

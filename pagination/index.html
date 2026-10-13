@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pagination, measured: OFFSET vs keyset</title>
+<meta name="description" content="Paging through one million rows with LIMIT/OFFSET and with a keyset cursor: how OFFSET slows down page by page, and why it repeats or loses rows when data changes. With an in-browser SQLite demo.">
+<link rel="canonical" href="https://tuhuudev.github.io/measured/pagination/">
+<meta property="og:title" content="Pagination, measured: OFFSET vs keyset">
+<meta property="og:description" content="Last page of a million rows: 26.8 ms with OFFSET, 0.022 ms with a keyset cursor. And OFFSET repeats rows when new ones arrive. Measured, with a demo in your browser.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://tuhuudev.github.io/measured/pagination/">
+<meta property="og:image" content="https://tuhuudev.github.io/measured/pagination/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="alternate" type="application/atom+xml" title="Measured" href="https://tuhuudev.github.io/measured/feed.xml">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="../">Measured<span>.</span></a>
+  <nav class="site"><a href="../">All articles</a><a href="https://github.com/tuhuudev/measured">Source</a></nav>
+</div></header>
+
+<main class="wrap">
+<article>
+<h1>Pagination, measured: OFFSET vs keyset</h1>
+<p class="dek"><code>LIMIT 20 OFFSET 40</code> is the first way most of us learn to page through results. It gets slower with every page, and when rows are added or deleted between page loads, it shows some twice and skips others. Here is how much, and what to use instead.</p>
+<p class="meta">Published 2026-10-13 · SQLite 3.49.1 · 1,000,000 rows · one laptop · <a href="https://github.com/tuhuudev/measured/tree/main/labs/pagination">lab code</a></p>
+
+<div class="hero">
+  <div class="stat scan"><div class="k">Last page, OFFSET</div><div class="v">26.8 ms</div><div class="p"><span class="mono">LIMIT 20 OFFSET 999980</span></div></div>
+  <div class="stat search"><div class="k">Last page, keyset</div><div class="v">0.022 ms</div><div class="p"><span class="mono">WHERE (created_at, id) &lt; (?, ?)</span></div></div>
+</div>
+<p class="note">Medians of repeated runs on an in-memory database, so no disk and no network are involved. Same table, same index, same 20 rows returned. Page 1 took 0.021 ms both ways.</p>
+
+<p>Both queries use the same index, and both plans look fine at a glance. The difference is that OFFSET has to walk past every row before the page it returns, so its cost grows with the page number. Keyset pagination starts from where the last page ended, so every page costs the same. Below: the measurements, the correctness problem that matters even on small tables, and what keyset can't do.</p>
+
+<h2 id="setup">The setup</h2>
+<p>A table of 1,000,000 synthetic posts, shown newest first, 20 per page, with an index that matches the sort order:</p>
+<pre><code>CREATE TABLE posts (id INTEGER PRIMARY KEY, created_at INTEGER, author TEXT, title TEXT);
+CREATE INDEX idx_created ON posts(created_at, id);
+
+-- OFFSET: page n
+SELECT id, created_at, author, title FROM posts
+ ORDER BY created_at DESC, id DESC
+ LIMIT 20 OFFSET :skip;                 -- skip = (n - 1) * 20
+
+-- keyset: the page after the row (:c, :i), the last row of the previous page
+SELECT id, created_at, author, title FROM posts
+ WHERE (created_at, id) &lt; (:c, :i)
+ ORDER BY created_at DESC, id DESC
+ LIMIT 20;</code></pre>
+<p>Three posts share each <code>created_at</code> value on purpose, because real timestamps collide too. That's why <code>id</code> is in the sort order and in the index: with it, every row has a unique position.<sup><a href="#s-pg-limit">[2]</a></sup> For every page measured, the lab checked that both queries returned the same 20 rows.</p>
+
+<h2 id="offset">OFFSET reads the rows it skips</h2>
+<p>OFFSET doesn't jump anywhere. SQLite's documentation spells it out: it "computes the query as "LIMIT x+y" and discards the first y values without returning them to the application", so OFFSET "requires time proportional to the offset value".<sup><a href="#s-sq-rowvalue">[1]</a></sup> PostgreSQL's documentation says the same: "The rows skipped by an OFFSET clause still have to be computed inside the server; therefore a large OFFSET might be inefficient."<sup><a href="#s-pg-limit">[2]</a></sup></p>
+
+<div class="table-scroll"><table>
+  <thead><tr><th class="num">Page</th><th class="num">Rows skipped</th><th class="num">OFFSET</th><th class="num">keyset</th><th class="num">OFFSET VM instructions</th></tr></thead>
+  <tbody id="pages-table"></tbody>
+</table></div>
+<p class="note">Median time per query. VM instructions are the steps SQLite's bytecode engine ran, counted every 100 instructions. Keyset ran 300 on every page after the first.</p>
+
+<figure>
+<div class="chart" id="chart-pages">
+  <div class="legend"><span><i style="background:var(--scan)"></i>OFFSET</span><span><i style="background:var(--search)"></i>keyset</span></div>
+  <svg id="pages-svg" role="img" aria-label="Median time per page, log scale: OFFSET grows from 0.021 ms on page 1 to 26.8 ms on the last page; keyset stays near 0.022 ms"></svg>
+  <div class="tip"></div>
+</div>
+<figcaption>Median time to fetch one page of 20, on a <strong>log scale</strong> where each gridline is 10× the one before. Hover or tap a dot for the plan. Measured: SQLite in memory · 1M rows · one laptop.</figcaption>
+</figure>
+
+<p>The work grows in a straight line. Page 1,000 skips 19,980 rows and took 0.54 ms. Page 10,000 skips ten times as many and took 5.4 ms, also ten times as much. The VM instruction count tells the same story: about three instructions per skipped row, from 200 on page 1 to 3,000,100 on the last page. Keyset took 0.021–0.023 ms on every page, a figure that includes Python's own call and fetch overhead.</p>
+<p>The plans don't warn you. OFFSET's is <span class="tag scan">SCAN</span><span class="mono">posts USING INDEX idx_created</span>: it does use the index, to read rows already sorted, but it reads them from the first one. Keyset's is <span class="tag search">SEARCH</span><span class="mono">posts USING INDEX idx_created (created_at&lt;?)</span>: it starts in the middle of the index.<sup><a href="#s-sq-eqp">[4]</a></sup> If you read the <a href="../indexes/">indexes article</a>, that's the same SCAN versus SEARCH difference, only hidden behind a <code>LIMIT</code>.</p>
+<p>Selecting less doesn't fix it. Asking only for <code>id</code> lets SQLite answer from the index alone (<span class="mono">SCAN posts USING COVERING INDEX idx_created</span>), and the last page still took 11.1 ms: cheaper per row, still every row.</p>
+
+<h2 id="writes">OFFSET also shows wrong rows when data changes</h2>
+<p>Speed only matters on deep pages. This problem shows up on page 2. An OFFSET says "skip the first 20 rows <em>as they are now</em>", and the rows may have moved since page 1 was read. The lab read page 1, changed the table, then read pages 2 and 3:</p>
+<div class="table-scroll"><table>
+  <thead><tr><th>Between page 1 and page 2…</th><th>OFFSET</th><th>keyset</th></tr></thead>
+  <tbody>
+    <tr><td>5 newer posts arrive</td><td>the last <strong>5 rows of page 1 shown again</strong> on page 2</td><td>no repeats</td></tr>
+    <tr><td>5 posts on page 1 are deleted</td><td><strong>5 rows never shown</strong>: they moved onto page 1, which was already read</td><td>nothing missed</td></tr>
+  </tbody>
+</table></div>
+<p>A feed where new posts arrive while you scroll gets duplicates. A list where you delete or archive items as you go silently skips some. Keyset is immune because its cursor is a <em>row</em>, not a position: "everything after this post" means the same thing however many posts arrived in front of it.</p>
+
+<h2 id="tiebreak">The tie-breaker is not optional</h2>
+<p>The keyset condition has to point at exactly one row, so the sort must be unique. A row value comparison like <code>(created_at, id) &lt; (:c, :i)</code> compares left to right and stops at the first pair that differs<sup><a href="#s-pg-row">[3]</a></sup>, which is exactly "earlier timestamp, or same timestamp and smaller id".</p>
+<p>Drop the <code>id</code> and write <code>WHERE created_at &lt; :c</code>, and every page that ends in the middle of a group of equal timestamps silently skips the rest of that group. The lab walked through all 50,000 pages both ways. With <code>(created_at, id)</code> it returned 1,000,000 rows, each once. With <code>created_at</code> alone it returned 952,380: <strong>47,620 posts never appeared</strong>, and nothing errored.</p>
+<p>Row values arrived in SQLite 3.15.0 (2016).<sup><a href="#s-sq-rowvalue">[1]</a></sup> In PostgreSQL the same <code>(a, b) &lt; (x, y)</code> syntax works.<sup><a href="#s-pg-row">[3]</a></sup> One caveat: if one of the sort columns can be NULL, the comparison can come out unknown instead of true or false<sup><a href="#s-pg-row">[3]</a></sup>, so keep keyset columns <code>NOT NULL</code> or handle NULLs explicitly.</p>
+
+<h2 id="try">Try it</h2>
+<p>This is real SQLite, compiled to WebAssembly and running in your browser, with a 100,000-row version of the same table (5,000 pages). Pick a page and both queries run. Then try the write problem.</p>
+<div class="pg" id="pager" data-rows="100000">
+  <h3>Pagination demo</h3>
+  <div class="row"><button id="pager-build">Build the table</button><span class="status">Nothing loaded yet. Building takes a second or two.</span></div>
+  <div class="row" style="flex-wrap:nowrap">
+    <label for="pager-page" style="white-space:nowrap"><strong>Page:</strong></label>
+    <input id="pager-page" type="range" min="0" max="100" value="100" style="flex:1;min-width:0" disabled>
+    <span id="pager-page-v" class="mono" style="min-width:9em;text-align:right"></span>
+  </div>
+  <div class="hero" style="margin:8px 0">
+    <div class="stat scan"><div class="k">OFFSET</div><div class="v" id="pager-offset">—</div></div>
+    <div class="stat search"><div class="k">keyset</div><div class="v" id="pager-keyset">—</div></div>
+  </div>
+  <p class="status" id="pager-note" aria-live="polite"></p>
+  <pre><code id="pager-sql"></code></pre>
+  <div class="row"><button id="pager-writes" class="secondary" disabled>Read page 1, add 5 new posts, read page 2</button></div>
+  <div id="pager-w-out" hidden>
+    <div class="hero" style="margin:8px 0">
+      <div><strong>Page 2 via OFFSET</strong><ol id="pager-w-offset" class="mono" style="font-size:13px;padding-left:20px"></ol></div>
+      <div><strong>Page 2 via keyset</strong><ol id="pager-w-keyset" class="mono" style="font-size:13px;padding-left:20px"></ol></div>
+    </div>
+    <p class="status" id="pager-w-note" aria-live="polite"></p>
+  </div>
+  <p class="note">Browser timings are noisier than the lab's, and each is an average over repeated runs of about 60 ms. The cursor for page n is looked up before timing, because an app would already have it from the page it just showed.</p>
+</div>
+
+<h2 id="cant">What keyset can't do</h2>
+<ul>
+  <li><strong>Jump to page 437.</strong> A keyset cursor only knows "the page after this row" (and, with the comparison and order flipped, "the page before"). Numbered page links need an offset somewhere. For infinite scroll, "load more" and API cursors, that's no loss.</li>
+  <li><strong>Sort by anything you like.</strong> Each sort order needs its own unique key, its own condition, and an index that matches, or the keyset query isn't fast either.<sup><a href="#s-sq-rowvalue">[1]</a></sup></li>
+  <li><strong>Show "page X of Y" by itself.</strong> A total still needs a <code>count(*)</code>. On this SQLite table that was cheap, 0.18 ms. We didn't measure other databases, so don't assume it is everywhere.</li>
+</ul>
+<p>If you need numbered pages, OFFSET is fine for the first few. On page 10 it took 0.026 ms against keyset's 0.023 ms. The cost only shows up deep in the list, so capping how far users (and crawlers) can page is a reasonable compromise.</p>
+
+<h2 id="rules">Rules of thumb</h2>
+<ol class="rules">
+  <li><strong>For feeds, infinite scroll and API pagination, use keyset:</strong> <code>WHERE (sort_col, id) &lt; (:last_sort, :last_id) ORDER BY sort_col DESC, id DESC LIMIT n</code>, and return the last row's values as the cursor.</li>
+  <li><strong>Always end the sort with a unique column</strong>, usually the primary key, in both <code>ORDER BY</code> and the cursor.</li>
+  <li><strong>Index exactly that order</strong>, e.g. <code>(created_at, id)</code>. Without a matching index, keyset is just a slower filter.</li>
+  <li><strong>If you keep OFFSET, cap the page number</strong>, and expect duplicates and gaps while data changes.</li>
+  <li><strong>Check the plan:</strong> OFFSET pagination shows up as a <code>SCAN</code>, even with an index, while keyset shows <code>SEARCH</code>.</li>
+</ol>
+
+<h2 id="data">The data</h2>
+<p>All rows are synthetic (<code>Post number {i}</code>, three posts per timestamp). Every timing, plan and count is a real measurement from one run of <a href="https://github.com/tuhuudev/measured/blob/main/labs/pagination/pagination_lab.py"><code>labs/pagination/pagination_lab.py</code></a>. Raw output: <a href="https://github.com/tuhuudev/measured/blob/main/labs/pagination/results.json"><code>results.json</code></a>. Machine: AMD laptop, Windows 11, Python 3.12.10, SQLite 3.49.1. Medians of 101 runs, 15 for OFFSET from page 1,000 on. The lab was run three times in full: the last page took 26.8–27.3 ms with OFFSET and 0.022 ms with keyset each time, and the write and walk counts were identical. Timings include Python's call and fetch overhead. Run it yourself with <code>python labs/pagination/pagination_lab.py</code> (standard library only, about 6 seconds).</p>
+<p class="note">Caveats: SQLite only, measured in memory on one machine. PostgreSQL's OFFSET behaviour is quoted from its documentation, not measured. Only "next page" is measured; "previous page" uses the same mechanism with the comparison and order flipped.</p>
+
+<h2 id="sources">Sources</h2>
+<ol class="note">
+  <li id="s-sq-rowvalue"><a href="https://www.sqlite.org/rowvalue.html">SQLite: Row values, §3.1 Scrolling window queries and §4</a></li>
+  <li id="s-pg-limit"><a href="https://www.postgresql.org/docs/current/queries-limit.html">PostgreSQL: LIMIT and OFFSET</a></li>
+  <li id="s-pg-row"><a href="https://www.postgresql.org/docs/current/functions-comparisons.html">PostgreSQL: Row constructor comparison, §9.25.5</a></li>
+  <li id="s-sq-eqp"><a href="https://www.sqlite.org/eqp.html">SQLite: EXPLAIN QUERY PLAN</a></li>
+</ol>
+<p class="note">Sources 1–3 checked 2026-10-13, 4 on 2026-10-08. Found a mistake? <a href="https://github.com/tuhuudev/measured/issues">Open an issue</a>. Corrections are listed in the repo.</p>
+</article>
+</main>
+
+<footer class="site"><div class="wrap">Measured: developer concepts, with numbers you can reproduce. Code MIT, text CC BY 4.0.</div></footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+<script src="pager.js"></script>
+<script src="../assets/charts.js"></script>
+<script>
+fetch('../labs/pagination/results.json').then((r) => r.json()).then((R) => {
+  const n = (v) => v.toLocaleString('en-US');
+  const ms = (v) => (v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v >= 0.1 ? v.toFixed(3) : v.toFixed(4)) + ' ms';
+  Charts.dumbbell(document.getElementById('chart-pages'), R.pages.map((p) => ({
+    q: 'page ' + n(p.page), slow: p.offset_ms, slowPlan: 'OFFSET ' + n(p.offset) + ' · ' + R.plans.offset,
+    fast: p.keyset_ms, fastPlan: 'keyset · ' + (p.page === 1 ? 'first page, no cursor' : R.plans.keyset),
+  })));
+  const tb = document.getElementById('pages-table');
+  R.pages.forEach((p) => {
+    const tr = tb.insertRow();
+    [n(p.page), n(p.offset), ms(p.offset_ms), ms(p.keyset_ms), n(p.offset_vm_steps)].forEach((t) => { const td = tr.insertCell(); td.textContent = t; td.className = 'num'; });
+  });
+}).catch(() => {
+  document.getElementById('pages-svg').outerHTML = '<p class="note">Could not load results.json. The numbers are in the text and in the lab README.</p>';
+});
+</script>
+</body>
+</html>

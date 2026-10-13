@@ -16,6 +16,8 @@ PAGES = [
      ('266 ms', 'N+1: 1,001 queries'), ('29.5 ms', 'one JOIN: 1 query')),
     ('retries/og.png', ['Retries, measured:', 'why backoff needs jitter'],
      ('3.3 s', 'last client served, backoff'), ('0.46 s', 'last client served, with jitter')),
+    ('pagination/og.png', ['Pagination, measured:', 'OFFSET vs keyset'],
+     ('26.8 ms', 'last page, OFFSET'), ('0.022 ms', 'last page, keyset')),
 ]
 
 def font(name, size):

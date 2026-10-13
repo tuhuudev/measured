@@ -26,6 +26,11 @@
   <p class="dek">Developer concepts with numbers you can reproduce. Each article comes with a lab you can run, the raw results, and a primary source for every claim. Where possible, there's also something you can try right in the page.</p>
   <ul class="cards">
     <li>
+      <a href="pagination/">Pagination, measured: OFFSET vs keyset</a>
+      <p>The last page of a million rows: 26.8 ms with OFFSET, 0.022 ms with a keyset cursor. Plus the rows OFFSET repeats or loses when data changes, and an in-browser demo.</p>
+      <p class="meta">2026-10-13 · SQLite · lab + demo</p>
+    </li>
+    <li>
       <a href="retries/">Retries, measured: why backoff needs jitter</a>
       <p>200 clients hit a busy server at once. Retrying immediately, backing off, and backing off with jitter, measured against a real server, plus a simulator.</p>
       <p class="meta">2026-10-12 · real server · lab + simulator</p>
