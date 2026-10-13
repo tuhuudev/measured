@@ -8,6 +8,13 @@
   <updated>2026-10-13T00:00:00Z</updated>
   <author><name>tuhuudev</name></author>
   <entry>
+    <title>Batching writes, measured: one transaction vs one per row</title>
+    <link href="https://tuhuudev.github.io/measured/batching/"/>
+    <id>https://tuhuudev.github.io/measured/batching/</id>
+    <updated>2026-10-13T00:00:00Z</updated>
+    <summary>10,000 inserts into a SQLite file: a commit per row, batches, or one transaction, in three journal modes on a real SSD. Why the commit is what costs, and what WAL and synchronous=NORMAL trade away.</summary>
+  </entry>
+  <entry>
     <title>Pagination, measured: OFFSET vs keyset</title>
     <link href="https://tuhuudev.github.io/measured/pagination/"/>
     <id>https://tuhuudev.github.io/measured/pagination/</id>

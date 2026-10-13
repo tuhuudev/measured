@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batching writes, measured: one transaction vs one per row</title>
+<meta name="description" content="10,000 inserts into a SQLite file: one commit per row versus batches versus one transaction, in three journal modes on a real SSD. Why the commit, not the insert, is what costs, and what WAL and synchronous=NORMAL trade away.">
+<link rel="canonical" href="https://tuhuudev.github.io/measured/batching/">
+<meta property="og:title" content="Batching writes, measured: one transaction vs one per row">
+<meta property="og:description" content="10,000 inserts on an NVMe SSD: 25.2 s with a commit per row, 23.6 ms in one transaction. Measured in three journal modes, with a calculator.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://tuhuudev.github.io/measured/batching/">
+<meta property="og:image" content="https://tuhuudev.github.io/measured/batching/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="alternate" type="application/atom+xml" title="Measured" href="https://tuhuudev.github.io/measured/feed.xml">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="../">Measured<span>.</span></a>
+  <nav class="site"><a href="../">All articles</a><a href="https://github.com/tuhuudev/measured">Source</a></nav>
+</div></header>
+
+<main class="wrap">
+<article>
+<h1>Batching writes, measured: one transaction vs one per row</h1>
+<p class="dek">Inserting a row is cheap. Committing is not. The same 10,000 rows took 25 seconds or 24 milliseconds, depending only on how many commits they were split into.</p>
+<p class="meta">Published 2026-10-13 · SQLite 3.49.1 · database file on an NVMe SSD · one laptop · <a href="https://github.com/tuhuudev/measured/tree/main/labs/batching">lab code</a></p>
+
+<div class="hero">
+  <div class="stat scan"><div class="k">10,000 inserts, a commit per row</div><div class="v">25.2 s</div><div class="p">SQLite defaults · 10,000 commits</div></div>
+  <div class="stat search"><div class="k">Same inserts, one transaction</div><div class="v">23.6 ms</div><div class="p">SQLite defaults · 1 commit</div></div>
+</div>
+<p class="note">Medians of 3 trials, each into a fresh database file. In three full runs of the lab: 25.2–26.6 s and 23.6–27.3 ms. A different drive or OS will give other numbers; the ratio, about 1,000×, is the point.</p>
+
+<p>Unlike the other articles here, this one touches the disk on purpose, because that's where the cost is. SQLite's FAQ puts it plainly: it can do far more inserts per second than transactions, and "by default, each INSERT statement is its own transaction".<sup><a href="#s-sq-faq">[1]</a></sup> Below: how the time depends on rows per commit, what WAL mode and <code>synchronous=NORMAL</code> change (and what they give up), and a Python detail that decides which case you're in.</p>
+
+<h2 id="why">Why a commit is expensive</h2>
+<p>When a transaction commits, SQLite by default waits until the data is safely on the disk before it reports success, so a power cut or an OS crash can't lose it.<sup><a href="#s-sq-faq">[1]</a></sup> With <code>synchronous=FULL</code>, the default with a rollback journal, it asks the OS to sync the content to the disk before continuing.<sup><a href="#s-sq-sync">[2]</a></sup> That wait is paid per <em>commit</em>, not per row. Wrap many inserts in one <code>BEGIN</code> … <code>COMMIT</code> and the commit cost is shared among all of them.<sup><a href="#s-sq-faq">[1]</a></sup></p>
+
+<h2 id="measured">Measured: rows per commit</h2>
+<p>The lab inserts 10,000 rows of about 110 bytes into a new database file, with a <code>COMMIT</code> after every 1, 10, 100, 1,000 or all 10,000 rows, in SQLite's default mode (rollback journal, <code>synchronous=FULL</code>):</p>
+
+<figure>
+<div class="chart" id="chart-default">
+  <svg role="img" aria-label="Time for 10,000 inserts in the default mode: 25,168 ms with a commit per row, 2,166 ms per 10 rows, 240 ms per 100, 44.8 ms per 1,000, 23.6 ms in one transaction"></svg>
+  <div class="tip"></div>
+</div>
+<figcaption>10,000 inserts, SQLite defaults (<code>journal_mode=DELETE</code>, <code>synchronous=FULL</code>), median of 3 trials. Linear scale: the bottom bars are there, just tiny. Measured: one laptop · NVMe SSD · Windows 11.</figcaption>
+</figure>
+
+<p>Ten rows per commit is already ten times faster than one, and a hundred is a hundred times faster. After that the gains flatten out: once commits are rare, what's left is the work of the inserts themselves. A simple model fits that shape: total ≈ commits × 2.51 ms + rows × 0.0021 ms. On this SSD, one commit cost about as much as 1,200 inserts.</p>
+
+<h2 id="modes">WAL and synchronous=NORMAL</h2>
+<p>SQLite has a second journal mode, write-ahead logging (WAL). A commit there appends a commit record to the WAL file. With <code>synchronous=FULL</code> the WAL is still synced on every commit. With <code>synchronous=NORMAL</code> that sync is skipped.<sup><a href="#s-sq-wal">[3]</a></sup></p>
+<div class="table-scroll"><table>
+  <thead><tr><th>Mode</th><th class="num">1 row / commit</th><th class="num">10</th><th class="num">100</th><th class="num">1,000</th><th class="num">1 commit</th><th class="num">≈ per commit</th></tr></thead>
+  <tbody id="modes-table"></tbody>
+</table></div>
+<p class="note">10,000 inserts, medians of 3 trials. "≈ per commit" is the two-point model below, from the first and last columns.</p>
+<p>WAL with <code>FULL</code> made per-row commits about 7 times faster on this machine, and WAL with <code>NORMAL</code> about 100 times faster. But read what NORMAL gives up. WAL with <code>synchronous=NORMAL</code> never corrupts the database, but "a transaction committed in WAL mode with synchronous=NORMAL might roll back following a power loss or system crash".<sup><a href="#s-sq-sync">[2]</a></sup> That's fine for a cache or analytics events. It's not fine for an order you've already confirmed to a customer. (An application crash alone doesn't lose commits in any mode.<sup><a href="#s-sq-sync">[2]</a></sup>) And <code>synchronous=OFF</code>, which the lab didn't measure, can corrupt the database on an OS crash or power loss.<sup><a href="#s-sq-sync">[2]</a></sup></p>
+<p>Look at the last column, though. In one transaction, all three modes took 21–24 ms. Batching made the mode choice almost irrelevant for this workload, without trading away any durability.</p>
+
+<h2 id="python">The Python detail that decides which case you're in</h2>
+<p>Python's <code>sqlite3</code> module, by default, opens a transaction for you before an <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code> or <code>REPLACE</code>, and keeps it open until you call <code>commit()</code>.<sup><a href="#s-py">[4]</a></sup> The lab confirmed it: with a default connection, <code>in_transaction</code> was already <code>True</code> after the first insert. So with the defaults, the commit pattern is whatever your <code>commit()</code> calls say:</p>
+<div class="table-scroll"><table>
+  <thead><tr><th>Default connection, SQLite defaults, 10,000 rows</th><th class="num">Median</th></tr></thead>
+  <tbody id="py-table"></tbody>
+</table></div>
+<pre><code>db = sqlite3.connect('app.db')        # implicit transactions (the default)
+for row in rows:
+    db.execute('INSERT INTO events (ts, payload) VALUES (?, ?)', row)
+db.commit()                           # one commit: fast
+
+db = sqlite3.connect('app.db', isolation_level=None)   # autocommit
+for row in rows:
+    db.execute('INSERT ...', row)     # every statement commits: slow
+</code></pre>
+<p>The slow case shows up in real code as a <code>commit()</code> inside the loop, often hidden in a helper like <code>save(item)</code> that commits "to be safe", or as a connection in autocommit mode (<code>isolation_level=None</code>, which disables the implicit transactions<sup><a href="#s-py">[4]</a></sup>). <code>executemany()</code> uses the same implicit transaction<sup><a href="#s-py">[4]</a></sup>, and with one commit it was the fastest variant here.</p>
+
+<h2 id="calc">Estimate your own batch</h2>
+<div class="pg" id="calc">
+  <h3>Batch calculator</h3>
+  <div class="row">
+    <label for="calc-rows"><strong>Rows:</strong></label>
+    <select id="calc-rows" style="width:auto"><option value="1000">1,000</option><option value="10000">10,000</option><option value="100000" selected>100,000</option><option value="1000000">1,000,000</option></select>
+  </div>
+  <div class="row" style="flex-wrap:nowrap">
+    <label for="calc-batch" style="white-space:nowrap"><strong>Rows per commit:</strong></label>
+    <input id="calc-batch" type="range" min="0" max="1000" value="0" style="flex:1;min-width:0">
+    <span id="calc-batch-v" class="mono" style="min-width:5.5em;text-align:right"></span>
+  </div>
+  <div class="chart" id="chart-calc" style="margin-top:8px">
+    <svg role="img" aria-label="Estimated total time for each mode at the chosen batch size"></svg>
+    <div class="tip"></div>
+  </div>
+  <p class="note">Estimate: commits × per-commit cost + rows × per-row cost, using the costs measured above for each mode. The model comes from the 1-row and 10,000-row measurements. For the batch sizes in between it was within ±25% of the measured value in 26 of 27 cases, and off by 41% in one. The lab only inserted 10,000 rows, so larger row counts are an extrapolation. Per-commit costs depend heavily on your drive and OS: the shape will carry over, the absolute numbers won't.</p>
+</div>
+
+<h2 id="rules">Rules of thumb</h2>
+<ol class="rules">
+  <li><strong>Commit per unit of work, not per row.</strong> Importing a file, processing a queue batch, seeding a database: one transaction, or batches of a few hundred to a few thousand rows.</li>
+  <li><strong>Find the hidden commits.</strong> A <code>commit()</code> inside a loop or inside a per-item helper, or a driver in autocommit mode, gives you the slow column.</li>
+  <li><strong>Batching beats tuning.</strong> Batched, all three modes were within a few milliseconds of each other. Change <code>synchronous</code> only if you've decided which commits you can afford to lose.</li>
+  <li><strong>Batches have a ceiling too.</strong> SQLite allows only one write transaction at a time, so while a long one is open, other connections that try to write get <code>SQLITE_BUSY</code>.<sup><a href="#s-sq-txn">[5]</a></sup> And if a batch fails, all of it rolls back. Past about 1,000 rows per commit, the gain here was under 2×.</li>
+</ol>
+
+<h2 id="data">The data</h2>
+<p>All rows are synthetic. Every timing is a real measurement from one run of <a href="https://github.com/tuhuudev/measured/blob/main/labs/batching/batching_lab.py"><code>labs/batching/batching_lab.py</code></a>. Raw output: <a href="https://github.com/tuhuudev/measured/blob/main/labs/batching/results.json"><code>results.json</code></a>, and two more full runs in <a href="https://github.com/tuhuudev/measured/tree/main/labs/batching/runs"><code>runs/</code></a>. Machine: AMD laptop, Windows 11, Python 3.12.10, SQLite 3.49.1, database files on an NVMe SSD. Medians of 3 trials, each into a new file. Timings include Python's call overhead. Run it yourself with <code>python labs/batching/batching_lab.py</code> (standard library only, about 3 minutes).</p>
+<p class="note">Caveats: one machine and one drive. Commit cost depends on the drive, its write cache, the file system and the OS, so expect other absolute numbers. Single writer, no concurrent readers, no secondary indexes. Individual trials varied more than the medians: in one run, a single default-mode trial at 100 rows per commit took 1,120 ms against a median of 314 ms. Client/server databases add a network round trip per statement on top, which this lab doesn't measure.</p>
+
+<h2 id="sources">Sources</h2>
+<ol class="note">
+  <li id="s-sq-faq"><a href="https://www.sqlite.org/faq.html#q19">SQLite FAQ #19: INSERT is really slow</a></li>
+  <li id="s-sq-sync"><a href="https://www.sqlite.org/pragma.html#pragma_synchronous">SQLite: PRAGMA synchronous</a></li>
+  <li id="s-sq-wal"><a href="https://www.sqlite.org/wal.html">SQLite: Write-Ahead Logging</a></li>
+  <li id="s-py"><a href="https://docs.python.org/3/library/sqlite3.html">Python: sqlite3, transaction control</a></li>
+  <li id="s-sq-txn"><a href="https://www.sqlite.org/lang_transaction.html">SQLite: Transaction</a></li>
+</ol>
+<p class="note">All sources checked 2026-10-13. Found a mistake? <a href="https://github.com/tuhuudev/measured/issues">Open an issue</a>. Corrections are listed in the repo.</p>
+</article>
+</main>
+
+<footer class="site"><div class="wrap">Measured: developer concepts, with numbers you can reproduce. Code MIT, text CC BY 4.0.</div></footer>
+
+<script src="../assets/charts.js"></script>
+<script>
+(function () {
+  const NAMES = { 'DELETE FULL': 'Default (DELETE + FULL)', 'WAL FULL': 'WAL + FULL', 'WAL NORMAL': 'WAL + NORMAL' };
+  const COLORS = { 'DELETE FULL': 'var(--scan)', 'WAL FULL': 'var(--ink-3)', 'WAL NORMAL': 'var(--search)' };
+  const n = (v) => v.toLocaleString('en-US');
+  const ms = (v) => (v >= 100 ? Math.round(v).toLocaleString('en-US') : v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v >= 0.1 ? v.toFixed(3) : v.toFixed(4)) + ' ms';
+  const dur = (v) => (v >= 10000 ? (v / 1000).toFixed(1) + ' s' : v >= 1000 ? (v / 1000).toFixed(2) + ' s' : ms(v));
+  fetch('../labs/batching/results.json').then((r) => r.json()).then((R) => {
+    const modes = R.modes.map((m) => ({ key: m.journal_mode + ' ' + m.synchronous, ...m }));
+    const def = modes[0];
+    Charts.bars(document.getElementById('chart-default'), def.batches.map((b) => ({
+      label: b.batch === 1 ? '1 row / commit' : b.batch === R.rows ? '1 commit' : n(b.batch) + ' rows', v: b.ms, color: b.batch === R.rows ? 'var(--search)' : 'var(--scan)',
+    })), { fmt: dur, note: 'for 10,000 inserts' });
+
+    const tb = document.getElementById('modes-table');
+    modes.forEach((m) => {
+      const tr = tb.insertRow();
+      [NAMES[m.key], ...m.batches.map((b) => dur(b.ms)), ms(m.fit.per_commit_ms)].forEach((t, i) => { const td = tr.insertCell(); td.textContent = t; if (i) td.className = 'num'; });
+    });
+    const py = R.python_default, pt = document.getElementById('py-table');
+    [['loop of execute(), one commit() at the end', py.loop_one_commit_ms], ['same loop, commit() after every row', py.loop_commit_each_ms], ['executemany(), one commit()', py.executemany_one_commit_ms]]
+      .forEach(([label, v]) => { const tr = pt.insertRow(); const a = tr.insertCell(); a.textContent = label; const b = tr.insertCell(); b.textContent = dur(v); b.className = 'num'; });
+
+    // Calculator: commits x per_commit + rows x per_row, per mode. Slider is log-scaled from 1 row to all rows per commit.
+    const rowsSel = document.getElementById('calc-rows'), slider = document.getElementById('calc-batch'), batchV = document.getElementById('calc-batch-v');
+    function draw() {
+      const rows = Number(rowsSel.value);
+      const batch = Math.max(1, Math.round(10 ** (slider.value / 1000 * Math.log10(rows))));
+      const commits = Math.ceil(rows / batch);
+      batchV.textContent = n(batch);
+      Charts.bars(document.getElementById('chart-calc'), modes.map((m) => ({
+        label: NAMES[m.key], v: commits * m.fit.per_commit_ms + rows * m.fit.per_row_ms, color: COLORS[m.key],
+      })), { fmt: (v) => '≈ ' + dur(v), note: `${n(commits)} commits (estimate)` });
+    }
+    rowsSel.addEventListener('change', draw);
+    slider.addEventListener('input', draw);
+    draw();
+  }).catch(() => {
+    document.querySelectorAll('.chart svg').forEach((s) => { s.outerHTML = '<p class="note">Could not load results.json. The numbers are in the lab README.</p>'; });
+  });
+})();
+</script>
+</body>
+</html>

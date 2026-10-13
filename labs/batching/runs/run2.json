@@ -1,0 +1,183 @@
+{
+ "sqlite": "3.49.1",
+ "python": "3.12.10",
+ "machine": "AMD64 Family 23 Model 96 Stepping 1, AuthenticAMD",
+ "os": "Windows-11-10.0.26200-SP0",
+ "rows": 10000,
+ "trials": 3,
+ "workdir_drive": "C:",
+ "modes": [
+  {
+   "journal_mode": "DELETE",
+   "synchronous": "FULL",
+   "batches": [
+    {
+     "batch": 1,
+     "commits": 10000,
+     "ms": 26574.4,
+     "min_ms": 26208.3,
+     "max_ms": 27226.2,
+     "model_ms": 26574.4,
+     "model_error_pct": 0.0
+    },
+    {
+     "batch": 10,
+     "commits": 1000,
+     "ms": 2749.5,
+     "min_ms": 2710.2,
+     "max_ms": 3086.0,
+     "model_ms": 2679.6,
+     "model_error_pct": -2.5
+    },
+    {
+     "batch": 100,
+     "commits": 100,
+     "ms": 281.2,
+     "min_ms": 278.4,
+     "max_ms": 294.4,
+     "model_ms": 290.1,
+     "model_error_pct": 3.2
+    },
+    {
+     "batch": 1000,
+     "commits": 10,
+     "ms": 48.7,
+     "min_ms": 48.1,
+     "max_ms": 49.0,
+     "model_ms": 51.2,
+     "model_error_pct": 5.1
+    },
+    {
+     "batch": 10000,
+     "commits": 1,
+     "ms": 27.3,
+     "min_ms": 24.0,
+     "max_ms": 30.8,
+     "model_ms": 27.3,
+     "model_error_pct": 0.0
+    }
+   ],
+   "fit": {
+    "per_commit_ms": 2.655,
+    "per_row_ms": 0.00246
+   }
+  },
+  {
+   "journal_mode": "WAL",
+   "synchronous": "FULL",
+   "batches": [
+    {
+     "batch": 1,
+     "commits": 10000,
+     "ms": 2978.1,
+     "min_ms": 2788.9,
+     "max_ms": 3683.5,
+     "model_ms": 2978.1,
+     "model_error_pct": 0.0
+    },
+    {
+     "batch": 10,
+     "commits": 1000,
+     "ms": 326.2,
+     "min_ms": 317.7,
+     "max_ms": 332.1,
+     "model_ms": 317.9,
+     "model_error_pct": -2.5
+    },
+    {
+     "batch": 100,
+     "commits": 100,
+     "ms": 54.6,
+     "min_ms": 54.1,
+     "max_ms": 55.2,
+     "model_ms": 51.9,
+     "model_error_pct": -4.9
+    },
+    {
+     "batch": 1000,
+     "commits": 10,
+     "ms": 27.0,
+     "min_ms": 26.5,
+     "max_ms": 28.2,
+     "model_ms": 25.3,
+     "model_error_pct": -6.3
+    },
+    {
+     "batch": 10000,
+     "commits": 1,
+     "ms": 22.6,
+     "min_ms": 22.5,
+     "max_ms": 24.4,
+     "model_ms": 22.6,
+     "model_error_pct": 0.0
+    }
+   ],
+   "fit": {
+    "per_commit_ms": 0.2956,
+    "per_row_ms": 0.00223
+   }
+  },
+  {
+   "journal_mode": "WAL",
+   "synchronous": "NORMAL",
+   "batches": [
+    {
+     "batch": 1,
+     "commits": 10000,
+     "ms": 246.8,
+     "min_ms": 246.5,
+     "max_ms": 249.7,
+     "model_ms": 246.8,
+     "model_error_pct": 0.0
+    },
+    {
+     "batch": 10,
+     "commits": 1000,
+     "ms": 56.2,
+     "min_ms": 55.5,
+     "max_ms": 56.7,
+     "model_ms": 44.3,
+     "model_error_pct": -21.2
+    },
+    {
+     "batch": 100,
+     "commits": 100,
+     "ms": 26.6,
+     "min_ms": 26.5,
+     "max_ms": 27.9,
+     "model_ms": 24.0,
+     "model_error_pct": -9.8
+    },
+    {
+     "batch": 1000,
+     "commits": 10,
+     "ms": 22.1,
+     "min_ms": 22.0,
+     "max_ms": 22.8,
+     "model_ms": 22.0,
+     "model_error_pct": -0.5
+    },
+    {
+     "batch": 10000,
+     "commits": 1,
+     "ms": 21.8,
+     "min_ms": 21.0,
+     "max_ms": 24.7,
+     "model_ms": 21.8,
+     "model_error_pct": 0.0
+    }
+   ],
+   "fit": {
+    "per_commit_ms": 0.0225,
+    "per_row_ms": 0.00218
+   }
+  }
+ ],
+ "python_default": {
+  "isolation_level": "",
+  "in_transaction_after_first_insert": true,
+  "loop_one_commit_ms": 24.8,
+  "loop_commit_each_ms": 28321.5,
+  "executemany_one_commit_ms": 19.9
+ }
+}

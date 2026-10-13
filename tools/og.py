@@ -18,6 +18,8 @@ PAGES = [
      ('3.3 s', 'last client served, backoff'), ('0.46 s', 'last client served, with jitter')),
     ('pagination/og.png', ['Pagination, measured:', 'OFFSET vs keyset'],
      ('26.8 ms', 'last page, OFFSET'), ('0.022 ms', 'last page, keyset')),
+    ('batching/og.png', ['Batching writes,', 'measured'],
+     ('25.2 s', '10,000 inserts, a commit per row'), ('23.6 ms', 'same inserts, one transaction')),
 ]
 
 def font(name, size):

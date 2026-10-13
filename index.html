@@ -26,6 +26,11 @@
   <p class="dek">Developer concepts with numbers you can reproduce. Each article comes with a lab you can run, the raw results, and a primary source for every claim. Where possible, there's also something you can try right in the page.</p>
   <ul class="cards">
     <li>
+      <a href="batching/">Batching writes, measured: one transaction vs one per row</a>
+      <p>10,000 inserts into a SQLite file on an SSD: 25.2 s with a commit per row, 23.6 ms in one transaction. Three journal modes, what synchronous=NORMAL trades away, and a batch calculator.</p>
+      <p class="meta">2026-10-13 · SQLite · lab + calculator</p>
+    </li>
+    <li>
       <a href="pagination/">Pagination, measured: OFFSET vs keyset</a>
       <p>The last page of a million rows: 26.8 ms with OFFSET, 0.022 ms with a keyset cursor. Plus the rows OFFSET repeats or loses when data changes, and an in-browser demo.</p>
       <p class="meta">2026-10-13 · SQLite · lab + demo</p>
