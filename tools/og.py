@@ -20,6 +20,8 @@ PAGES = [
      ('26.8 ms', 'last page, OFFSET'), ('0.022 ms', 'last page, keyset')),
     ('batching/og.png', ['Batching writes,', 'measured'],
      ('25.2 s', '10,000 inserts, a commit per row'), ('23.6 ms', 'same inserts, one transaction')),
+    ('queueing/og.png', ['Queues, measured:', 'why latency explodes'],
+     ('554 ms', 'p99 at 90% load'), ('109 ms', 'p99 at 50% load, same server')),
 ]
 
 def font(name, size):

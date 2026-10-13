@@ -8,6 +8,13 @@
   <updated>2026-10-13T00:00:00Z</updated>
   <author><name>tuhuudev</name></author>
   <entry>
+    <title>Queues, measured: why latency explodes near full load</title>
+    <link href="https://tuhuudev.github.io/measured/queueing/"/>
+    <id>https://tuhuudev.github.io/measured/queueing/</id>
+    <updated>2026-10-13T00:00:00Z</updated>
+    <summary>One real server, random arrivals, load from 10% to 95%: how waiting grows near full utilisation, why variable work waits twice as long, and why short high-load tests can't be trusted. With a simulator.</summary>
+  </entry>
+  <entry>
     <title>Batching writes, measured: one transaction vs one per row</title>
     <link href="https://tuhuudev.github.io/measured/batching/"/>
     <id>https://tuhuudev.github.io/measured/batching/</id>

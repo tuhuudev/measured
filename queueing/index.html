@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Queues, measured: why latency explodes near full load</title>
+<meta name="description" content="One real server, requests at random times, load from 10% to 95%: how waiting time grows as utilisation approaches 100%, why variable requests make it worse, and why short tests at high load can't be trusted. With a simulator.">
+<link rel="canonical" href="https://tuhuudev.github.io/measured/queueing/">
+<meta property="og:title" content="Queues, measured: why latency explodes near full load">
+<meta property="og:description" content="Same server, same 10 ms requests: p99 109 ms at 50% load, 554 ms at 90%. Measured against the textbook queueing formulas, with a simulator.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://tuhuudev.github.io/measured/queueing/">
+<meta property="og:image" content="https://tuhuudev.github.io/measured/queueing/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="alternate" type="application/atom+xml" title="Measured" href="https://tuhuudev.github.io/measured/feed.xml">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="../">Measured<span>.</span></a>
+  <nav class="site"><a href="../">All articles</a><a href="https://github.com/tuhuudev/measured">Source</a></nav>
+</div></header>
+
+<main class="wrap">
+<article>
+<h1>Queues, measured: why latency explodes near full load</h1>
+<p class="dek">A server at 50% load and the same server at 90% load are not "a bit busier". Requests wait several times longer, and the slowest ones wait far longer still. Here is a real server measured against the textbook formulas.</p>
+<p class="meta">Published 2026-10-13 · real server on localhost · 3,000 requests per load · one laptop · <a href="https://github.com/tuhuudev/measured/tree/main/labs/queueing">lab code</a></p>
+
+<div class="hero">
+  <div class="stat search"><div class="k">p99 at 50% load</div><div class="v">109 ms</div><div class="p">requests averaging 10 ms of work</div></div>
+  <div class="stat scan"><div class="k">p99 at 90% load</div><div class="v">554 ms</div><div class="p">same server, same requests</div></div>
+</div>
+<p class="note">One worker, random arrival times, service times averaging 10 ms. In a second run: 100 ms and 568 ms. Nothing about the server changed between the two cards, only how often requests arrived.</p>
+
+<p>Nothing is broken at 90%. There is still 10% idle time. But requests arrive at random, so sometimes several arrive together and have to wait in line, and the closer the server is to fully busy, the longer it takes to work through such a pile-up. This article measures that, checks it against queueing theory, and shows why the last few percent of utilisation are the most expensive.</p>
+
+<h2 id="setup">The setup</h2>
+<p>The lab runs a real TCP server in its own process. It has <strong>one worker</strong> and serves requests in arrival order. Each request carries how long it should take, and the server busy-waits exactly that long, so service times are precise. A client sends requests at random times (a Poisson process, the "M" in the formulas below) at a chosen load, and times each one from send to reply.</p>
+<p>Two kinds of work, both averaging 10 ms per request:</p>
+<ul>
+  <li><strong>Variable:</strong> service times drawn from an exponential distribution. Most requests are quick, a few are long. That's the M/M/1 queue.<sup><a href="#s-mit">[1]</a></sup></li>
+  <li><strong>Constant:</strong> every request takes exactly 10 ms. That's M/D/1.<sup><a href="#s-mit">[1]</a></sup></li>
+</ul>
+<p>Load (utilisation, ρ) is the fraction of time the worker is busy: arrival rate × average service time.<sup><a href="#s-mit">[1]</a></sup> At each target load from 10% to 95%, the client sent 3,000 requests and the lab dropped the first 300 as warm-up.</p>
+
+<h2 id="curve">Measured: time per request as load grows</h2>
+<figure>
+<div class="chart" id="chart-mean">
+  <svg role="img" aria-label="Mean time per request with variable service at each load: 10.8 ms at 10%, 21.6 ms at 50%, 50.2 ms at 80%, 127 ms at 90%, 196 ms at 95%"></svg>
+  <div class="tip"></div>
+</div>
+<figcaption>Mean time per request, variable (exponential) service with a 10 ms average, one worker. Measured: localhost · one laptop · 3,000 requests per load. The full table is <a href="#data">below</a>.</figcaption>
+</figure>
+<p>For M/M/1, the textbook mean time in the system is T = 1/(μ − λ), which is the same as S / (1 − ρ) for an average service time S.<sup><a href="#s-mit">[1]</a></sup> Plug in S = 10 ms. At 50% load, 20 ms: half of it waiting. At 80%, 50 ms. At 90%, 100 ms. At 95%, 200 ms. From 80% on, every halving of the idle time doubles the time per request. The measurements follow that curve: 21.6 ms at 50%, 50.2 ms at 80%, 127 ms at 90%.</p>
+<p>The 90% figure came out above the textbook's 100 ms, and the 95% step, at 196 ms, isn't the clean doubling of the 90% one. Two reasons, both measured. First, the real load drifted: the 95% step actually ran at 98.6% because of the random draws. Second, near full load, 3,000 requests isn't enough to average out luck. More on that <a href="#noise">below</a>.</p>
+
+<h2 id="variability">Variable work waits twice as long</h2>
+<p>The general formula for one server with random arrivals, Pollaczek–Khinchine, says the average wait in line is λE[X²] / (2(1 − ρ)). It depends on the <em>second moment</em> of the service time, so on its spread, not just its average. With constant service the wait is half that of exponential service at the same load.<sup><a href="#s-mit">[1]</a></sup></p>
+<div class="table-scroll"><table>
+  <thead><tr><th>At 90% load, 10 ms average</th><th class="num">Measured mean</th><th class="num">Textbook mean</th><th class="num">Measured p99</th></tr></thead>
+  <tbody>
+    <tr><td>Constant service (M/D/1)</td><td class="num">54.9 ms</td><td class="num">55 ms</td><td class="num">209 ms</td></tr>
+    <tr><td>Variable service (M/M/1)</td><td class="num">127 ms</td><td class="num">100 ms</td><td class="num">554 ms</td></tr>
+  </tbody>
+</table></div>
+<p>Same average work, same load, more than twice the time per request. In real services, variable work is the norm: a cache miss, a slow query or a large payload are long requests that everyone behind them waits for. Making work more uniform, or moving the slow cases to a separate queue, cuts waiting even when the average doesn't change.</p>
+
+<h2 id="little">How many requests are inside</h2>
+<p>Little's law says the average number of requests in a system equals arrival rate × average time in the system: N = λT.<sup><a href="#s-mit">[1]</a></sup> The lab counted requests in the server directly. At 50% load there were 1.12 on average. At 90% there were 12.0. It matched λT to three decimals at every load, as it must over a run that starts and ends empty.</p>
+<p>That's useful in reverse: if you know your request rate and your latency, you know how many requests are in flight. Tracking that number, or the queue length, alongside utilisation shows how close a service is to its limit.</p>
+
+<h2 id="real">Is the real server the textbook server?</h2>
+<p>To separate the server's own cost from chance, the lab also replays each run through an ideal server: the same send times and the same service times, but no overhead at all. Up to 80% load, the real server's mean was within 0.9–2.2% of the ideal one. At 90% it was 2.8–5.4% slower, and at 95% 4.3–12.1%. The real server overran each 10 ms request by at most 0.12 ms (p99), about 1%. Near full load, even that 1% is amplified, for the same reason the waiting is.</p>
+
+<h2 id="noise">Short tests at high load lie</h2>
+<p>Near full load, a queue has a long memory. One unlucky burst builds a backlog that takes a long time to drain, so neighbouring requests' waits are strongly correlated. In the lab's second run, variable service at a 95% target ran at 97.7% and averaged 501 ms, against 196 ms in the run shown above. The simulation below makes the point cleanly. At 90% load, its 200,000 requests averaged 102 ms (theory: 100). Split into windows of 3,000 requests, the windows ranged from 56 to 438 ms.</p>
+<p>A five-minute load test at 90% can therefore look fine, or terrible, by luck. Test at high load for long enough, repeat it, and look at the spread, not one number.</p>
+
+<h2 id="try">Try it</h2>
+<div class="pg" id="sim">
+  <h3>Queue simulator</h3>
+  <div class="row" style="flex-wrap:nowrap">
+    <label for="sim-load" style="white-space:nowrap"><strong>Load:</strong></label>
+    <input id="sim-load" type="range" min="5" max="98" value="90" style="flex:1;min-width:0">
+    <span id="sim-load-v" class="mono" style="min-width:3.5em;text-align:right"></span>
+  </div>
+  <div class="row">
+    <label><input type="radio" name="sim-dist" value="exponential" checked> variable service</label>
+    <label><input type="radio" name="sim-dist" value="constant"> constant service</label>
+    <button id="sim-seed" class="secondary">New random seed</button><span class="status" id="sim-seed-v"></span>
+  </div>
+  <div class="chart" id="sim-chart" style="margin-top:8px">
+    <svg role="img" aria-label="Simulated mean and p99 time per request, and the textbook mean, at the chosen load"></svg>
+    <div class="tip"></div>
+  </div>
+  <p class="status" id="sim-windows" aria-live="polite"></p>
+  <p class="note">200,000 simulated requests, one FIFO server, 10 ms average service, random (Poisson) arrivals. It's the same model as the lab, without the network or the overhead. The textbook line is the mean only.</p>
+</div>
+
+<h2 id="retries">Retries make it worse</h2>
+<p>Every retry is one more arrival. In the <a href="../retries/">retries article</a>, 200 clients sent between 901 and 1,512 requests to get 200 served, depending on the retry policy. Under load, retries raise ρ exactly when the server has the least headroom, which pushes everyone further up the curve. Backoff with jitter and a cap on retries keep that from turning into a spiral.</p>
+
+<h2 id="rules">Rules of thumb</h2>
+<ol class="rules">
+  <li><strong>Leave headroom.</strong> With random arrivals, waiting grows like ρ / (1 − ρ): 1× at 50%, 4× at 80%, 9× at 90%, 19× at 95%. Plan capacity so normal peaks sit well below the knee.</li>
+  <li><strong>Watch utilisation and queue length, not just averages.</strong> Average latency looks fine long after p99 has blown up.</li>
+  <li><strong>Reduce variability.</strong> Constant work waited half as long as variable work with the same average. Split slow requests into their own queue, cap request sizes, cache the slow cases.</li>
+  <li><strong>Test high load long enough, more than once.</strong> At 90% load, 3,000-request windows of the same simulation differed by about 8×.</li>
+  <li><strong>Don't let retries add load at the worst moment.</strong> Back off with jitter, and cap retries.</li>
+</ol>
+
+<h2 id="data">The data</h2>
+<p>All traffic is synthetic. Every time is a real measurement from one run of <a href="https://github.com/tuhuudev/measured/blob/main/labs/queueing/queue_lab.py"><code>labs/queueing/queue_lab.py</code></a> (seed 2). Raw output: <a href="https://github.com/tuhuudev/measured/blob/main/labs/queueing/results.json"><code>results.json</code></a>, and the other runs in <a href="https://github.com/tuhuudev/measured/tree/main/labs/queueing/runs"><code>runs/</code></a>. Machine: AMD Ryzen 3 PRO 4350G laptop, Windows 11, Python 3.12.10. Server and client each ran on their own CPU core. Run it yourself with <code>python labs/queueing/queue_lab.py</code> (standard library only, about 20 minutes).</p>
+<div class="table-scroll"><table id="data-table">
+  <thead><tr><th>Service</th><th class="num">Target load</th><th class="num">Measured load</th><th class="num">Mean</th><th class="num">p99</th><th class="num">Textbook mean</th><th class="num">In server</th></tr></thead>
+  <tbody></tbody>
+</table></div>
+<p class="note">Caveats: one worker, first come first served, no queue limit, no timeouts. Real services have several workers; this lab doesn't model them. 3,000 requests per load step is short, so the high-load rows vary a lot between runs. A third run (seed 1) was discarded because other work on the laptop stalled the client for up to 96 ms. Times include the localhost round trip and Python overhead, about 0.1 ms.</p>
+
+<h2 id="sources">Sources</h2>
+<ol class="note">
+  <li id="s-mit"><a href="https://ocw.mit.edu/courses/16-36-communication-systems-engineering-spring-2009/resources/mit16_36s09_lec20/">MIT OpenCourseWare 16.36, Lecture 20: Delay models for data networks, single server queues (E. Modiano)</a></li>
+</ol>
+<p class="note">Checked 2026-10-13. Found a mistake? <a href="https://github.com/tuhuudev/measured/issues">Open an issue</a>. Corrections are listed in the repo.</p>
+</article>
+</main>
+
+<footer class="site"><div class="wrap">Measured: developer concepts, with numbers you can reproduce. Code MIT, text CC BY 4.0.</div></footer>
+
+<script src="sim.js"></script>
+<script src="../assets/charts.js"></script>
+<script>
+(function () {
+  const ms = (v) => (v >= 100 ? Math.round(v).toLocaleString('en-US') : v >= 10 ? v.toFixed(1) : v.toFixed(2)) + ' ms';
+  const pctf = (v) => Math.round(v * 100) + '%';
+  fetch('../labs/queueing/results.json').then((r) => r.json()).then((R) => {
+    Charts.bars(document.getElementById('chart-mean'), R.exponential.map((r) => ({
+      label: pctf(r.load) + ' load', v: r.client_mean_ms, color: r.load >= 0.9 ? 'var(--scan)' : 'var(--search)',
+    })), { fmt: ms, note: 'mean per request' });
+    const tb = document.querySelector('#data-table tbody');
+    [['exponential', 'variable'], ['constant', 'constant']].forEach(([k, name]) => R[k].forEach((r) => {
+      const tr = tb.insertRow();
+      [name, pctf(r.load), (r.measured_utilisation * 100).toFixed(1) + '%', ms(r.client_mean_ms), ms(r.client_p99_ms), ms(r.theory_mean_ms), r.mean_in_system.toFixed(2)]
+        .forEach((t, i) => { const td = tr.insertCell(); td.textContent = t; if (i) td.className = 'num'; });
+    }));
+  }).catch(() => {
+    document.querySelector('#chart-mean svg').outerHTML = '<p class="note">Could not load results.json. The numbers are in the lab README.</p>';
+  });
+
+  // Simulator.
+  const load = document.getElementById('sim-load');
+  let seed = 1;
+  function run() {
+    const rho = Number(load.value) / 100, dist = document.querySelector('input[name=sim-dist]:checked').value;
+    document.getElementById('sim-load-v').textContent = load.value + '%';
+    document.getElementById('sim-seed-v').textContent = 'seed ' + seed;
+    const r = QueueSim.simulate({ load: rho, dist, seed }), t = QueueSim.theoryMean(rho, 10, dist);
+    Charts.bars(document.getElementById('sim-chart'), [
+      { label: 'textbook mean', v: t, color: 'var(--ink-3)' },
+      { label: 'simulated mean', v: r.mean, color: 'var(--search)' },
+      { label: 'simulated p99', v: r.p99, color: 'var(--scan)' },
+    ], { fmt: ms, note: `at ${load.value}% load` });
+    document.getElementById('sim-windows').textContent = `Means of ${r.windows} consecutive windows of 3,000 requests ranged from ${ms(r.windowMin)} to ${ms(r.windowMax)}.`;
+  }
+  load.addEventListener('input', run);
+  document.querySelectorAll('input[name=sim-dist]').forEach((el) => el.addEventListener('change', run));
+  document.getElementById('sim-seed').addEventListener('click', () => { seed = (seed % 1000) + 1; run(); });
+  run();
+})();
+</script>
+</body>
+</html>
