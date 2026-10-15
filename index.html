@@ -26,6 +26,11 @@
   <p class="dek">Developer concepts with numbers you can reproduce. Each article comes with a lab you can run, the raw results, and a primary source for every claim. Where possible, there's also something you can try right in the page.</p>
   <ul class="cards">
     <li>
+      <a href="stampede/">Cache stampede, measured: what happens when a hot key expires</a>
+      <p>One hot value, a real database process, 1,000 reads/s: each expiry sent 98 recomputes and the slowest read waited 11.1 s. A lock: 1 recompute. XFetch: about 2, until a short TTL made it run away. With a simulator.</p>
+      <p class="meta">2026-10-15 · real database process · lab + simulator</p>
+    </li>
+    <li>
       <a href="queueing/">Queues, measured: why latency explodes near full load</a>
       <p>One real server, requests at random times, load from 10% to 95%: p99 109 ms at 50% load, 554 ms at 90%. Measured against the textbook formulas, with a simulator.</p>
       <p class="meta">2026-10-13 · real server · lab + simulator</p>

@@ -5,8 +5,15 @@
   <link href="https://tuhuudev.github.io/measured/"/>
   <link rel="self" href="https://tuhuudev.github.io/measured/feed.xml"/>
   <id>https://tuhuudev.github.io/measured/</id>
-  <updated>2026-10-13T00:00:00Z</updated>
+  <updated>2026-10-15T00:00:00Z</updated>
   <author><name>tuhuudev</name></author>
+  <entry>
+    <title>Cache stampede, measured: what happens when a hot key expires</title>
+    <link href="https://tuhuudev.github.io/measured/stampede/"/>
+    <id>https://tuhuudev.github.io/measured/stampede/</id>
+    <updated>2026-10-15T00:00:00Z</updated>
+    <summary>One hot cached value, a real database process, 10 to 1,000 reads per second: how many recomputes each expiry sends with plain TTL, a lock and XFetch, why p99 misses it, and how a short TTL makes XFetch run away. With a simulator.</summary>
+  </entry>
   <entry>
     <title>Queues, measured: why latency explodes near full load</title>
     <link href="https://tuhuudev.github.io/measured/queueing/"/>

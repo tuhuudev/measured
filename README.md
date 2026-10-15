@@ -16,6 +16,7 @@ Every article has:
 | [Pagination, measured: OFFSET vs keyset](https://tuhuudev.github.io/measured/pagination/) | [`labs/pagination`](labs/pagination) (`python labs/pagination/pagination_lab.py`) |
 | [Batching writes, measured: one transaction vs one per row](https://tuhuudev.github.io/measured/batching/) | [`labs/batching`](labs/batching) (`python labs/batching/batching_lab.py`) |
 | [Queues, measured: why latency explodes near full load](https://tuhuudev.github.io/measured/queueing/) | [`labs/queueing`](labs/queueing) (`python labs/queueing/queue_lab.py`) |
+| [Cache stampede, measured: what happens when a hot key expires](https://tuhuudev.github.io/measured/stampede/) | [`labs/stampede`](labs/stampede) (`python labs/stampede/stampede_lab.py`) |
 
 The site is plain static HTML with no build step. To preview it, run `python -m http.server` in the repo root and open http://localhost:8000/.
 

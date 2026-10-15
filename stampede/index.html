@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache stampede, measured: what happens when a hot key expires</title>
+<meta name="description" content="One hot cached value, a real database process, 10 to 1,000 reads per second: how many recomputes hit the database when the value expires, with plain TTL, a lock, and XFetch (probabilistic early expiration). And when XFetch runs away. With a simulator.">
+<link rel="canonical" href="https://tuhuudev.github.io/measured/stampede/">
+<meta property="og:title" content="Cache stampede, measured: what happens when a hot key expires">
+<meta property="og:description" content="At 1,000 reads/s, one expiry sent 98 recomputes to the database and the slowest read waited 11 s. A lock: 1 recompute. XFetch: about 2, until it ran away. Measured, with a simulator.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://tuhuudev.github.io/measured/stampede/">
+<meta property="og:image" content="https://tuhuudev.github.io/measured/stampede/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="alternate" type="application/atom+xml" title="Measured" href="https://tuhuudev.github.io/measured/feed.xml">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="../">Measured<span>.</span></a>
+  <nav class="site"><a href="../">All articles</a><a href="https://github.com/tuhuudev/measured">Source</a></nav>
+</div></header>
+
+<main class="wrap">
+<article>
+<h1>Cache stampede, measured: what happens when a hot key expires</h1>
+<p class="dek">A cached value expires, and every request that arrives before the new value is ready goes to the database to compute it again. Here is how many that is, what it costs, and how a lock and XFetch prevent it, including one setting where XFetch makes things far worse.</p>
+<p class="meta">Published 2026-10-15 · real database process on localhost · 10 to 1,000 reads per second · one laptop · <a href="https://github.com/tuhuudev/measured/tree/main/labs/stampede">lab code</a></p>
+
+<div class="hero">
+  <div class="stat scan"><div class="k">Recomputes per expiry, plain TTL</div><div class="v">98</div><div class="p">1,000 reads/s; slowest read waited 11.1 s</div></div>
+  <div class="stat search"><div class="k">Same, with a lock</div><div class="v">1</div><div class="p">slowest read waited 100 ms</div></div>
+</div>
+<p class="note">One hot value, 100 ms to recompute, 2 s TTL, one database worker. Averages over 5 expiries of one run; another run gave 95.3 and 1.</p>
+
+<p>Caching an expensive value with a time-to-live is the usual pattern: read the cache, and if the value is missing or expired, recompute it and write it back.<sup><a href="#s-xfetch">[1]</a></sup> It has a gap. Between the moment the value expires and the moment the first recompute finishes, every request sees a miss, and each one starts its own recompute. Those recomputes compete for the same database and slow each other down.<sup><a href="#s-xfetch">[1]</a></sup> That's a cache stampede, also called dog-piling. This article measures it, and two fixes.</p>
+
+<h2 id="setup">The setup</h2>
+<p>The lab runs a real "database" in its own process. It recomputes one value; each recompute takes exactly 100 ms, and it does them <strong>one at a time</strong>, in arrival order. An app reads the value through an in-process cache at random (Poisson) times: 10, 100 or 1,000 reads per second. The cache starts warm, with a TTL of 2 s or 10 s. Three ways to refresh it:</p>
+<ul>
+  <li><strong>Plain TTL:</strong> every read that finds the value expired recomputes it and waits for the result.</li>
+  <li><strong>Lock</strong> (single-flight): only the first such read recomputes; reads that arrive meanwhile wait for that one result.</li>
+  <li><strong>XFetch:</strong> probabilistic early expiration, from a 2015 VLDB paper.<sup><a href="#s-xfetch">[1]</a></sup> Explained <a href="#xfetch">below</a>.</li>
+</ul>
+<p>The <em>stampede size</em> is the paper's measure: how many recomputes start within one recompute time (100 ms) of the first one.<sup><a href="#s-xfetch">[1]</a></sup></p>
+
+<h2 id="plain">Measured: plain TTL</h2>
+<figure>
+<div class="chart" id="chart-plain">
+  <svg role="img" aria-label="Average recomputes per expiry with plain TTL, 2 s TTL: 1.73 at 10 reads per second, 11.2 at 100, 98.4 at 1,000"></svg>
+  <div class="tip"></div>
+</div>
+<figcaption>Average stampede size per expiry, plain TTL, 2 s TTL, 100 ms recompute. Measured: localhost · one laptop · 60 s per rate. The full table is <a href="#data">below</a>.</figcaption>
+</figure>
+<p>The stampede size is roughly the number of reads that arrive during one recompute: 100 ms × 1,000 reads/s ≈ 100. Measured: 98.4 on average, 112 at most. The database handles them one after another, so the 98th waits about 98 × 100 ms. The slowest read took 11.1 s, for a value that takes 100 ms to compute. During each stampede the database is busy for about 10 s, every 12 s or so: it was busy 82% of the time, to serve a value that changes every 2 s. With a longer TTL (10 s), the stampedes were the same size (84.9 on average) and the slowest read waited 11.7 s.</p>
+<p>A database that runs recomputes in parallel would spread that work differently, but they would still share its CPU, disk and locks. 98 copies of the same expensive query at once is the problem either way.</p>
+
+<h2 id="p99">p99 doesn't see it</h2>
+<div class="table-scroll"><table>
+  <thead><tr><th>Plain TTL, 1,000 reads/s, 2 s TTL</th><th class="num">Read time</th></tr></thead>
+  <tbody>
+    <tr><td>p50</td><td class="num">0.0006 ms</td></tr>
+    <tr><td>p99</td><td class="num">0.004 ms</td></tr>
+    <tr><td>p99.9</td><td class="num">8,630 ms</td></tr>
+    <tr><td>slowest</td><td class="num">11,115 ms</td></tr>
+  </tbody>
+</table></div>
+<p>Only 0.82% of reads waited. Everyone else got a cache hit in microseconds. So the p99 is a cache hit, and a dashboard showing p99 latency looks perfect while some users wait 8 to 11 s every few seconds. The database's load, the number of recomputes, or p99.9 show it; p99 doesn't.</p>
+
+<h2 id="lock">A lock: one recompute, everyone else waits</h2>
+<p>With a lock, the first read that sees the value expired recomputes it, and every read that arrives meanwhile waits for that one result. Measured: exactly <strong>1</strong> recompute per expiry, at every rate and both TTLs. The database was busy 4.8% of the time instead of 82%, and no read waited longer than 106 ms.</p>
+<p>The cost is that waiting. At 1,000 reads/s with a 2 s TTL, 4.8% of reads arrived during a recompute and waited for it, 52 ms at the median. Every expiry still makes users wait; it just makes them wait once, for one recompute. In a cache shared by several servers, the lock also has to be shared, and the app has to decide what happens if the lock holder dies.</p>
+
+<h2 id="xfetch">XFetch: refresh a little early, at random</h2>
+<p>XFetch removes the wait for nearly everyone by refreshing <em>before</em> the value expires. Each read pretends it is a random amount of time in the future, and if the value would be expired by then, it recomputes.<sup><a href="#s-xfetch">[1]</a></sup> The whole rule, from the paper's Figure 3:<sup><a href="#s-xfetch">[1]</a></sup></p>
+<pre><code>recompute if  now − Δ · β · ln(rand()) ≥ expiry</code></pre>
+<p>rand() is uniform on (0, 1], so −ln(rand()) is a random positive number, usually around 1 and occasionally larger. Δ is how long the last recompute took, stored with the value. β is a knob that defaults to 1. Far from expiry, the jump almost never reaches it; close to expiry, more and more reads reach it, and with many reads one of them usually does well before the expiry. That read recomputes, and every other read keeps getting the cached value.</p>
+<p>The paper proves that for β = 1 and high request rates, the expected stampede size is at most about e − 1/e ≈ 2.4 however high the rate goes, and the refresh happens at most about Δ · ln(n) early, where n is the number of requests per recompute time (rate × Δ).<sup><a href="#s-xfetch">[1]</a></sup></p>
+<figure>
+<div class="chart" id="chart-ttl10">
+  <svg role="img" aria-label="Average recomputes per expiry at 1,000 reads per second, 10 s TTL: plain 84.9, lock 1, XFetch 1.85"></svg>
+  <div class="tip"></div>
+</div>
+<figcaption>Average stampede size per expiry, 1,000 reads/s, 10 s TTL. Measured: 120 s per strategy.</figcaption>
+</figure>
+<p>With a 10 s TTL, that's what happened. Average stampede sizes were 1.92, 2.33 and 1.85 at 10, 100 and 1,000 reads/s. At 1,000 reads/s, only 24 of 120,137 reads waited at all, and those were the reads doing the recompute; the p99.9 was 0.016 ms. It refreshed earlier than the paper's bound (963 ms before expiry on average, against Δ · ln(n) = 461 ms), for a reason that matters in the next section.</p>
+
+<h2 id="runaway">When XFetch runs away</h2>
+<p>With the 2 s TTL at 1,000 reads/s, XFetch failed badly. Stampedes grew from 1–4 recomputes to between 30 and 100, and after 36.6 s more than 1,000 recomputes were queued at the database, which is where the lab stops a run. A second run got there in 10.2 s. An earlier version of the lab without that cut-off queued over 22,000 recomputes, and its 60 s run took nearly 40 minutes to drain.</p>
+<p>The cause is Δ. The paper measures it around the recompute, so it includes any time the recompute spends waiting for the database.<sup><a href="#s-xfetch">[1]</a></sup> When two or three early recomputes overlap, the later ones queue, and the Δ stored with the value becomes 200–400 ms instead of 100. A bigger Δ makes the next refresh start earlier and gives more reads the chance to trigger it, so more recomputes overlap, so Δ grows again. While Δ · ln(rate × Δ) stays below the TTL, this settles back down. Above it (Δ ≈ 343 ms here), reads start triggering recomputes as soon as a new value is written, and it never recovers. In the recorded run, Δ stayed between 100 and 337 ms for 25 expiries, then reached 447 ms and, after one dip to 352 ms, climbed to 2,955 ms by the time the run was stopped.</p>
+<p>A 10 s TTL moves that threshold to about 1,383 ms. In the 10 s runs, Δ reached up to 708 ms after overlaps and came back to 100 ms each time. In the simulation below, XFetch with a 2 s TTL ran away in 20 of 20 simulated hours at 1,000 reads/s and in 17 of 20 at 100 reads/s, and in none of 20 with a 10 s TTL.</p>
+<p>This is the same feedback as in the <a href="../queueing/">queueing article</a>: work queued behind other work makes everything slower, and here "slower" also means "more work". The fix in this lab was a TTL well above Δ · ln(rate × Δ). Not measured here: limiting XFetch to one recompute in flight, or measuring Δ without the queueing time, should also cut the loop.</p>
+
+<h2 id="try">Try it</h2>
+<div class="pg" id="sim">
+  <h3>Stampede simulator</h3>
+  <div class="row" style="flex-wrap:nowrap">
+    <label for="sim-rate" style="white-space:nowrap"><strong>Reads/s:</strong></label>
+    <input id="sim-rate" type="range" min="0" max="100" value="87" style="flex:1;min-width:0">
+    <span id="sim-rate-v" class="mono" style="min-width:3.5em;text-align:right"></span>
+  </div>
+  <div class="row">
+    <label><input type="radio" name="sim-strategy" value="plain"> plain TTL</label>
+    <label><input type="radio" name="sim-strategy" value="lock"> lock</label>
+    <label><input type="radio" name="sim-strategy" value="xfetch" checked> XFetch</label>
+  </div>
+  <div class="row">
+    <label><input type="radio" name="sim-ttl" value="2000" checked> TTL 2 s</label>
+    <label><input type="radio" name="sim-ttl" value="10000"> TTL 10 s</label>
+    <label for="sim-beta">β <select id="sim-beta" style="width:auto"><option>0.5</option><option selected>1</option><option>2</option></select></label>
+    <button id="sim-seed" class="secondary">New random seed</button><span class="status" id="sim-seed-v"></span>
+  </div>
+  <div class="chart" id="sim-chart" style="margin-top:8px">
+    <svg role="img" aria-label="Simulated recomputes per expiry and slowest read for the chosen settings"></svg>
+    <div class="tip"></div>
+  </div>
+  <p class="status" id="sim-out" aria-live="polite"></p>
+  <p class="note">60 expiries of one hot value, 100 ms recompute, one database worker, random (Poisson) reads. Same model as the lab, without the network or the overhead; it stops, like the lab, when more than 1,000 recomputes are queued.</p>
+</div>
+
+<h2 id="rules">Rules of thumb</h2>
+<ol class="rules">
+  <li><strong>Expect about rate × recompute time recomputes per expiry.</strong> 1,000 reads/s and a 100 ms recompute gave about 100, every expiry.</li>
+  <li><strong>Watch p99.9, the slowest reads, and the database load, not p99.</strong> Under 1% of reads hit the stampede, so p99 stays a cache hit.</li>
+  <li><strong>A lock gives exactly one recompute,</strong> at the cost of making every read that arrives during it wait.</li>
+  <li><strong>XFetch avoids the wait,</strong> with about two recomputes per expiry at any rate, if the TTL is well above Δ · ln(rate × Δ).</li>
+  <li><strong>Check what Δ measures.</strong> If it includes queueing, overlapping recomputes make it grow, and with a short TTL that feeds on itself.</li>
+</ol>
+
+<h2 id="data">The data</h2>
+<p>Traffic and database work are synthetic. Every time is a real measurement from one run of <a href="https://github.com/tuhuudev/measured/blob/main/labs/stampede/stampede_lab.py"><code>labs/stampede/stampede_lab.py</code></a> (seed 2). Raw output: <a href="https://github.com/tuhuudev/measured/blob/main/labs/stampede/results.json"><code>results.json</code></a>, and the other run in <a href="https://github.com/tuhuudev/measured/tree/main/labs/stampede/runs"><code>runs/</code></a>. Machine: AMD Ryzen 3 PRO 4350G laptop, Windows 11, Python 3.12.10. The database and the app each ran on their own CPU core. Run it yourself with <code>python labs/stampede/stampede_lab.py</code> (standard library only, about 30 minutes).</p>
+<div class="table-scroll"><table id="data-table">
+  <thead><tr><th>TTL</th><th>Strategy</th><th class="num">Reads/s</th><th class="num">Recomputes</th><th class="num">Stampede mean (max)</th><th class="num">Waited</th><th class="num">p99.9</th><th class="num">Slowest</th></tr></thead>
+  <tbody></tbody>
+</table></div>
+<p class="note">Caveats: one hot key, one database worker, recomputes of exactly 100 ms. XFetch is as published: the read that refreshes waits for the result. The XFetch run at 1,000 reads/s with a 2 s TTL was stopped at 1,000 queued recomputes; its row covers the 36.6 s before that. The app was occasionally late handling a read, by up to 159 ms; the simulation, which has no such delays, gives the same stampede sizes. Times include the localhost round trip and Python overhead; the database overran the 100 ms by at most 0.22 ms (p99) in 16 of the other 17 cells.</p>
+
+<h2 id="sources">Sources</h2>
+<ol class="note">
+  <li id="s-xfetch"><a href="https://www.vldb.org/pvldb/vol8/p886-vattani.pdf">A. Vattani, F. Chierichetti, K. Lowenstein: Optimal Probabilistic Cache Stampede Prevention. PVLDB 8(8), 2015</a> (abstract, Sec. 1, Definition 3, Theorem 7, Fig. 3, Sec. 5)</li>
+</ol>
+<p class="note">Checked 2026-10-15. Found a mistake? <a href="https://github.com/tuhuudev/measured/issues">Open an issue</a>. Corrections are listed in the repo.</p>
+</article>
+</main>
+
+<footer class="site"><div class="wrap">Measured: developer concepts, with numbers you can reproduce. Code MIT, text CC BY 4.0.</div></footer>
+
+<script src="sim.js"></script>
+<script src="../assets/charts.js"></script>
+<script>
+(function () {
+  const ms = (v) => (v >= 100 ? Math.round(v).toLocaleString('en-US') : v >= 10 ? v.toFixed(1) : v >= 0.1 ? v.toFixed(2) : v.toPrecision(2)) + ' ms';
+  const num = (v) => (v >= 10 ? v.toFixed(1) : v.toFixed(2)).replace(/\.0+$/, '');
+  const names = { plain: 'plain TTL', lock: 'lock', xfetch: 'XFetch' };
+  const colors = { plain: 'var(--scan)', lock: 'var(--search)', xfetch: 'var(--search)' };
+  fetch('../labs/stampede/results.json').then((r) => r.json()).then((R) => {
+    const pick = (ttl, s, rate) => R.results.find((r) => r.ttl_s === ttl && r.strategy === s && r.rate_per_s === rate);
+    Charts.bars(document.getElementById('chart-plain'), [10, 100, 1000].map((rate) => ({
+      label: rate.toLocaleString('en-US') + ' reads/s', v: pick(2, 'plain', rate).stampede_mean, color: rate === 1000 ? 'var(--scan)' : 'var(--search)',
+    })), { fmt: num, note: 'recomputes per expiry' });
+    Charts.bars(document.getElementById('chart-ttl10'), ['plain', 'lock', 'xfetch'].map((s) => ({
+      label: names[s], v: pick(10, s, 1000).stampede_mean, color: colors[s],
+    })), { fmt: num, note: 'recomputes per expiry' });
+    const tb = document.querySelector('#data-table tbody');
+    R.results.forEach((r) => {
+      const tr = tb.insertRow();
+      const name = names[r.strategy] + (r.runaway_at_s ? ' (stopped at ' + r.runaway_at_s.toFixed(1) + ' s)' : '');
+      [r.ttl_s + ' s', name, r.rate_per_s.toLocaleString('en-US'), r.recomputes.toLocaleString('en-US'), `${num(r.stampede_mean)} (${r.stampede_max})`,
+        (r.waited_share * 100).toFixed(2) + '%', ms(r.read_p999_ms), ms(r.read_max_ms)]
+        .forEach((t, i) => { const td = tr.insertCell(); td.textContent = t; if (i > 1) td.className = 'num'; });
+    });
+  }).catch(() => {
+    document.querySelectorAll('#chart-plain svg, #chart-ttl10 svg').forEach((el) => { el.outerHTML = '<p class="note">Could not load results.json. The numbers are in the lab README.</p>'; });
+  });
+
+  // Simulator. The slider maps 0..100 to 10..2,000 reads/s on a log scale, rounded to two significant digits.
+  const rateEl = document.getElementById('sim-rate'), betaEl = document.getElementById('sim-beta');
+  const rateOf = () => Number((10 * Math.pow(200, Number(rateEl.value) / 100)).toPrecision(2));
+  let seed = 1;
+  function run() {
+    const rate = rateOf(), strategy = document.querySelector('input[name=sim-strategy]:checked').value;
+    const ttlMs = Number(document.querySelector('input[name=sim-ttl]:checked').value), beta = Number(betaEl.value);
+    document.getElementById('sim-rate-v').textContent = rate.toLocaleString('en-US');
+    document.getElementById('sim-seed-v').textContent = 'seed ' + seed;
+    const r = StampedeSim.simulate({ strategy, rate, beta, ttlMs, durationMs: 60 * ttlMs, seed });
+    Charts.bars(document.getElementById('sim-chart'), [
+      { label: 'recomputes / expiry', v: r.stampedeMean, color: r.stampedeMean > 10 ? 'var(--scan)' : 'var(--search)' },
+      { label: 'reads per recompute', v: Math.max(1, rate * 0.1), color: 'var(--ink-3)' },
+    ], { fmt: num, note: '' });
+    const out = r.runawayAt === null
+      ? `Slowest read: ${ms(r.maxWait)}. Reads that waited: ${(r.waitedShare * 100).toFixed(2)}%. Database recomputes: ${r.recomputesPerMin.toFixed(0)} per minute.`
+      : `Ran away: more than 1,000 recomputes queued after ${(r.runawayAt / 1000).toFixed(0)} s (Δ had grown to ${ms(r.deltaAtEnd)}).`;
+    document.getElementById('sim-out').textContent = out;
+  }
+  rateEl.addEventListener('input', run);
+  betaEl.addEventListener('change', run);
+  document.querySelectorAll('input[name=sim-strategy], input[name=sim-ttl]').forEach((el) => el.addEventListener('change', run));
+  document.getElementById('sim-seed').addEventListener('click', () => { seed = (seed % 1000) + 1; run(); });
+  run();
+})();
+</script>
+</body>
+</html>

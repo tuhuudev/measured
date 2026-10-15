@@ -22,6 +22,8 @@ PAGES = [
      ('25.2 s', '10,000 inserts, a commit per row'), ('23.6 ms', 'same inserts, one transaction')),
     ('queueing/og.png', ['Queues, measured:', 'why latency explodes'],
      ('554 ms', 'p99 at 90% load'), ('109 ms', 'p99 at 50% load, same server')),
+    ('stampede/og.png', ['Cache stampede,', 'measured'],
+     ('98', 'recomputes per expiry, plain TTL'), ('1', 'same, with a lock')),
 ]
 
 def font(name, size):
