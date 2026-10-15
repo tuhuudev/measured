@@ -75,7 +75,7 @@
 
 <h2 id="xfetch">XFetch: refresh a little early, at random</h2>
 <p>XFetch removes the wait for nearly everyone by refreshing <em>before</em> the value expires. Each read pretends it is a random amount of time in the future, and if the value would be expired by then, it recomputes.<sup><a href="#s-xfetch">[1]</a></sup> The whole rule, from the paper's Figure 3:<sup><a href="#s-xfetch">[1]</a></sup></p>
-<pre><code>recompute if  now − Δ · β · ln(rand()) ≥ expiry</code></pre>
+<pre><code>recompute if now − Δ·β·ln(rand()) ≥ expiry</code></pre>
 <p>rand() is uniform on (0, 1], so −ln(rand()) is a random positive number, usually around 1 and occasionally larger. Δ is how long the last recompute took, stored with the value. β is a knob that defaults to 1. Far from expiry, the jump almost never reaches it; close to expiry, more and more reads reach it, and with many reads one of them usually does well before the expiry. That read recomputes, and every other read keeps getting the cached value.</p>
 <p>The paper proves that for β = 1 and high request rates, the expected stampede size is at most about e − 1/e ≈ 2.4 however high the rate goes, and the refresh happens at most about Δ · ln(n) early, where n is the number of requests per recompute time (rate × Δ).<sup><a href="#s-xfetch">[1]</a></sup></p>
 <figure>
@@ -89,7 +89,7 @@
 
 <h2 id="runaway">When XFetch runs away</h2>
 <p>With the 2 s TTL at 1,000 reads/s, XFetch failed badly. Stampedes grew from 1–4 recomputes to between 30 and 100, and after 36.6 s more than 1,000 recomputes were queued at the database, which is where the lab stops a run. A second run got there in 10.2 s. An earlier version of the lab without that cut-off queued over 22,000 recomputes, and its 60 s run took nearly 40 minutes to drain.</p>
-<p>The cause is Δ. The paper measures it around the recompute, so it includes any time the recompute spends waiting for the database.<sup><a href="#s-xfetch">[1]</a></sup> When two or three early recomputes overlap, the later ones queue, and the Δ stored with the value becomes 200–400 ms instead of 100. A bigger Δ makes the next refresh start earlier and gives more reads the chance to trigger it, so more recomputes overlap, so Δ grows again. While Δ · ln(rate × Δ) stays below the TTL, this settles back down. Above it (Δ ≈ 343 ms here), reads start triggering recomputes as soon as a new value is written, and it never recovers. In the recorded run, Δ stayed between 100 and 337 ms for 25 expiries, then reached 447 ms and, after one dip to 352 ms, climbed to 2,955 ms by the time the run was stopped.</p>
+<p>The cause is Δ. The paper measures it around the recompute, so it includes any time the recompute spends waiting for the database.<sup><a href="#s-xfetch">[1]</a></sup> When two or three early recomputes overlap, the later ones queue, and the Δ stored with the value becomes 200–400 ms instead of 100. A bigger Δ makes the next refresh start earlier and gives more reads the chance to trigger it, so more recomputes overlap, so Δ grows again. While Δ · ln(rate × Δ) stays below the TTL, this settles back down. Above it (Δ ≈ 343 ms here), reads start triggering recomputes as soon as a new value is written, and in our runs it did not recover. In the recorded run, Δ stayed between 100 and 337 ms for 25 expiries, then reached 447 ms and, after one dip to 352 ms, climbed to 2,955 ms by the time the run was stopped.</p>
 <p>A 10 s TTL moves that threshold to about 1,383 ms. In the 10 s runs, Δ reached up to 708 ms after overlaps and came back to 100 ms each time. In the simulation below, XFetch with a 2 s TTL ran away in 20 of 20 simulated hours at 1,000 reads/s and in 17 of 20 at 100 reads/s, and in none of 20 with a 10 s TTL.</p>
 <p>This is the same feedback as in the <a href="../queueing/">queueing article</a>: work queued behind other work makes everything slower, and here "slower" also means "more work". The fix in this lab was a TTL well above Δ · ln(rate × Δ). Not measured here: limiting XFetch to one recompute in flight, or measuring Δ without the queueing time, should also cut the loop.</p>
 
@@ -166,8 +166,8 @@
     const tb = document.querySelector('#data-table tbody');
     R.results.forEach((r) => {
       const tr = tb.insertRow();
-      const name = names[r.strategy] + (r.runaway_at_s ? ' (stopped at ' + r.runaway_at_s.toFixed(1) + ' s)' : '');
-      [r.ttl_s + ' s', name, r.rate_per_s.toLocaleString('en-US'), r.recomputes.toLocaleString('en-US'), `${num(r.stampede_mean)} (${r.stampede_max})`,
+      const name = names[r.strategy] + (r.runaway_at_s ? ' (stopped at ' + r.runaway_at_s.toFixed(1) + ' s)' : '');
+      [r.ttl_s + ' s', name, r.rate_per_s.toLocaleString('en-US'), r.recomputes.toLocaleString('en-US'), `${num(r.stampede_mean)} (${r.stampede_max})`,
         (r.waited_share * 100).toFixed(2) + '%', ms(r.read_p999_ms), ms(r.read_max_ms)]
         .forEach((t, i) => { const td = tr.insertCell(); td.textContent = t; if (i > 1) td.className = 'num'; });
     });
@@ -186,9 +186,9 @@
     document.getElementById('sim-seed-v').textContent = 'seed ' + seed;
     const r = StampedeSim.simulate({ strategy, rate, beta, ttlMs, durationMs: 60 * ttlMs, seed });
     Charts.bars(document.getElementById('sim-chart'), [
-      { label: 'recomputes / expiry', v: r.stampedeMean, color: r.stampedeMean > 10 ? 'var(--scan)' : 'var(--search)' },
-      { label: 'reads per recompute', v: Math.max(1, rate * 0.1), color: 'var(--ink-3)' },
-    ], { fmt: num, note: '' });
+      { label: 'stampede size', v: r.stampedeMean, color: r.stampedeMean > 10 ? 'var(--scan)' : 'var(--search)' },
+      { label: 'reads / 100 ms', v: Math.max(1, rate * 0.1), color: 'var(--ink-3)' },
+    ], { fmt: num, note: 'recomputes per expiry vs reads per recompute time' });
     const out = r.runawayAt === null
       ? `Slowest read: ${ms(r.maxWait)}. Reads that waited: ${(r.waitedShare * 100).toFixed(2)}%. Database recomputes: ${r.recomputesPerMin.toFixed(0)} per minute.`
       : `Ran away: more than 1,000 recomputes queued after ${(r.runawayAt / 1000).toFixed(0)} s (Δ had grown to ${ms(r.deltaAtEnd)}).`;
